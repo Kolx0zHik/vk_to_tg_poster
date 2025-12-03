@@ -24,9 +24,12 @@ class TelegramClient:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         self.session = requests.Session()
 
-    def _post(self, method: str, data: dict) -> None:
+    def _post(self, method: str, data: dict, json_mode: bool = False) -> None:
         url = f"{self.base_url}/{method}"
-        resp = self.session.post(url, data=data, timeout=20)
+        if json_mode:
+            resp = self.session.post(url, json=data, timeout=20)
+        else:
+            resp = self.session.post(url, data=data, timeout=20)
         if not resp.ok:
             raise RuntimeError(f"Telegram API error ({method}): {resp.status_code} {resp.text}")
         payload = resp.json()
@@ -71,29 +74,63 @@ class TelegramClient:
         text = f"{title or ''}\n{link_url}" if title else link_url
         self.send_text(text.strip(), vk_url=vk_url)
 
+    def send_media_group(self, media: List[dict]) -> None:
+        logger.debug("Sending media group to Telegram (%s items)", len(media))
+        data = {"chat_id": self.channel_id, "media": media}
+        self._post("sendMediaGroup", data, json_mode=True)
+
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
         vk_url = post.vk_link
+        attachments = self._filter_attachments(post.attachments, allowed)
 
-        if allowed.text and post.text:
+        photos = [a for a in attachments if a.type == "photo"]
+        videos = [a for a in attachments if a.type == "video"]
+        audios = [a for a in attachments if a.type == "audio"]
+        links = [a for a in attachments if a.type == "link"]
+
+        text_used = False
+
+        # Single photo: отправляем с текстом в caption и кнопкой.
+        if photos and len(photos) == 1:
+            caption = post.text if allowed.text else None
+            self.send_photo(photos[0].url, caption=caption, vk_url=vk_url)
+            text_used = bool(caption)
+        # Множественные фото: отправляем альбом, caption в первом, потом отдельное сообщение с кнопкой.
+        elif len(photos) > 1:
+            caption = post.text if allowed.text else None
+            media = []
+            for idx, photo in enumerate(photos):
+                item = {"type": "photo", "media": photo.url}
+                if idx == 0 and caption:
+                    item["caption"] = caption
+                media.append(item)
+            self.send_media_group(media)
+            # Добавляем кнопку, чтобы была ссылка на VK.
+            self.send_text("Открыть пост в VK", vk_url=vk_url)
+            text_used = bool(caption)
+
+        # Видео/аудио
+        for video in videos:
+            if video.url and video.url.endswith((".mp4", ".mov", ".mkv")):
+                self.send_video(video.url, caption=post.text if (allowed.text and not text_used) else video.title, vk_url=vk_url)
+                text_used = text_used or bool(post.text)
+            else:
+                self.send_link(video.url or vk_url, title=video.title or "Видео", vk_url=vk_url)
+
+        for audio in audios:
+            if audio.url:
+                self.send_audio(audio.url, caption=post.text if (allowed.text and not text_used) else audio.title, vk_url=vk_url)
+                text_used = text_used or bool(post.text)
+            else:
+                self.send_link(vk_url, title=audio.title or "Аудио", vk_url=vk_url)
+
+        # Текст, если ещё не использовали и нет фото/медиа с подписью.
+        if allowed.text and post.text and not text_used and not photos and not videos and not audios:
             self.send_text(post.text, vk_url=vk_url)
 
-        attachments = self._filter_attachments(post.attachments, allowed)
-        for attachment in attachments:
-            if attachment.type == "photo":
-                self.send_photo(attachment.url, vk_url=vk_url)
-            elif attachment.type == "video":
-                # Telegram требует реальный видео-файл; если URL пустой или не mp4 — отправляем ссылкой.
-                if attachment.url and attachment.url.endswith((".mp4", ".mov", ".mkv")):
-                    self.send_video(attachment.url, caption=attachment.title, vk_url=vk_url)
-                else:
-                    self.send_link(attachment.url or vk_url, title=attachment.title or "Видео", vk_url=vk_url)
-            elif attachment.type == "audio":
-                if attachment.url:
-                    self.send_audio(attachment.url, caption=attachment.title, vk_url=vk_url)
-                else:
-                    self.send_link(vk_url, title=attachment.title or "Аудио", vk_url=vk_url)
-            elif attachment.type == "link":
-                self.send_link(attachment.url, title=attachment.title, vk_url=vk_url)
+        # Ссылки отдельными сообщениями.
+        for link in links:
+            self.send_link(link.url, title=link.title, vk_url=vk_url)
 
     @staticmethod
     def _filter_attachments(attachments: List[Attachment], allowed: ContentTypes) -> List[Attachment]:
