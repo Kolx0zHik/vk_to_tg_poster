@@ -376,6 +376,14 @@ INDEX_HTML = """
       color: #ffe9f0;
     }
     .communities { display: grid; gap: 12px; }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
     .community {
       border: 1px solid var(--stroke);
       border-radius: 14px;
@@ -459,7 +467,7 @@ INDEX_HTML = """
     </div>
 
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div class="card-header">
         <h3>Сообщества</h3>
         <button class="btn" id="addCommunity">+ Добавить сообщество</button>
       </div>
