@@ -52,11 +52,19 @@ class TelegramClient:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendMessage", data)
 
-    def send_photo(self, photo_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
+    def send_photo(
+        self,
+        photo_url: str,
+        caption: str | None = None,
+        vk_url: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> None:
         logger.debug("Sending photo to Telegram")
         data = {"chat_id": self.channel_id, "photo": photo_url}
         if caption:
             data["caption"] = caption
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendPhoto", data)
@@ -83,11 +91,9 @@ class TelegramClient:
         text = f"{title or ''}\n{link_url}" if title else link_url
         self.send_text(text.strip(), vk_url=vk_url)
 
-    def send_media_group(self, media: List[dict], parse_mode: Optional[str] = None) -> None:
+    def send_media_group(self, media: List[dict]) -> None:
         logger.debug("Sending media group to Telegram (%s items)", len(media))
         data = {"chat_id": self.channel_id, "media": media}
-        if parse_mode:
-            data["parse_mode"] = parse_mode
         self._post("sendMediaGroup", data, json_mode=True)
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
@@ -104,7 +110,12 @@ class TelegramClient:
         # Single photo: отправляем с текстом в caption и кнопкой.
         if photos and len(photos) == 1:
             caption = post.text if allowed.text else None
-            self.send_photo(photos[0].url, caption=caption, vk_url=vk_url)
+            self.send_photo(
+                photos[0].url,
+                caption=_escape_html(caption) if caption else None,
+                vk_url=vk_url,
+                parse_mode="HTML" if caption else None,
+            )
             text_used = bool(caption)
         # Множественные фото: отправляем альбом, caption в первом со ссылкой на VK.
         elif len(photos) > 1:
@@ -119,8 +130,9 @@ class TelegramClient:
                 item = {"type": "photo", "media": photo.url}
                 if idx == 0 and caption_full:
                     item["caption"] = caption_full
+                    item["parse_mode"] = "HTML"
                 media.append(item)
-            self.send_media_group(media, parse_mode="HTML")
+            self.send_media_group(media)
             text_used = bool(caption_parts)
 
         # Видео/аудио
