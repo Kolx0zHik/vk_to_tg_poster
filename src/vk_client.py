@@ -34,6 +34,18 @@ class VKClient:
         for item in items:
             attachments = self._parse_attachments(item.get("attachments", []))
             text = item.get("text", "") or ""
+
+            copy_history = item.get("copy_history") or []
+            if copy_history:
+                original = copy_history[0]
+                orig_text = original.get("text", "") or ""
+                orig_attachments = self._parse_attachments(original.get("attachments", []))
+                attachments.extend(orig_attachments)
+                if text and orig_text:
+                    text = f"{text}\n\n{orig_text}"
+                elif orig_text and not text:
+                    text = orig_text
+
             posts.append(
                 Post(
                     id=item["id"],

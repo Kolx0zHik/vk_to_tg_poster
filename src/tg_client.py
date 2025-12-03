@@ -109,10 +109,10 @@ class TelegramClient:
 
         # Single photo: отправляем с текстом в caption и кнопкой.
         if photos and len(photos) == 1:
-            caption = post.text if allowed.text else None
+            caption = _escape_html(post.text) if (allowed.text and post.text) else None
             self.send_photo(
                 photos[0].url,
-                caption=_escape_html(caption) if caption else None,
+                caption=caption,
                 vk_url=vk_url,
                 parse_mode="HTML" if caption else None,
             )
@@ -123,16 +123,28 @@ class TelegramClient:
             if allowed.text and post.text:
                 caption_parts.append(_escape_html(post.text))
             if vk_url:
+                caption_parts.append("")
                 caption_parts.append(f'<a href="{vk_url}">Открыть пост в VK</a>')
             caption_full = "\n".join(caption_parts) if caption_parts else None
             media = []
             for idx, photo in enumerate(photos):
                 item = {"type": "photo", "media": photo.url}
                 if idx == 0 and caption_full:
-                    item["caption"] = caption_full
+                    item["caption"] = caption_full[:1024]  # Telegram caption limit
                     item["parse_mode"] = "HTML"
                 media.append(item)
-            self.send_media_group(media)
+            # Telegram rate limits media groups; retry once on 429.
+            try:
+                self.send_media_group(media)
+            except RuntimeError as exc:
+                if "429" in str(exc):
+                    logger.warning("Rate limited on media group, retrying once after 3s")
+                    import time
+
+                    time.sleep(3)
+                    self.send_media_group(media)
+                else:
+                    raise
             text_used = bool(caption_parts)
 
         # Видео/аудио
