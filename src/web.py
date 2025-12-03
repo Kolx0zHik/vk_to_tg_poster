@@ -45,15 +45,8 @@ class TokenModel(BaseModel):
 
 
 class TelegramModel(BaseModel):
-    channel_id: str
+    channel_id: str = ""
     bot_token: str = ""
-
-    @field_validator("channel_id")
-    @classmethod
-    def channel_not_empty(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Не указан канал Telegram")
-        return value
 
 
 class ContentTypesModel(BaseModel):
@@ -82,7 +75,7 @@ class SaveRequest(BaseModel):
     general: GeneralModel
     vk: TokenModel = TokenModel()
     telegram: TelegramModel
-    communities: List[CommunityModel] = Field(min_length=1)
+    communities: List[CommunityModel] = Field(default_factory=list)
 
     @field_validator("communities")
     @classmethod
@@ -155,11 +148,14 @@ async def save_config(payload: SaveRequest) -> dict:
         parse_config_dict(
             merged,
             require_tokens=False,
-            require_channel=True,
-            require_communities=True,
+            require_channel=False,
+            require_communities=False,
         )
     except ConfigError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "field": "telegram.channel_id"},
+        )
 
     save_config_dict(merged, CONFIG_PATH)
     return {"ok": True}
@@ -256,7 +252,7 @@ INDEX_HTML = """
       color: var(--muted);
       margin-bottom: 6px;
     }
-    input[type="text"], input[type="number"] {
+    input[type="text"], input[type="number"], select {
       width: 100%;
       padding: 10px 12px;
       border-radius: 12px;
@@ -267,10 +263,23 @@ INDEX_HTML = """
       outline: none;
       transition: border-color 0.2s ease, transform 0.15s ease;
     }
-    input:focus {
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input[type=number] { -moz-appearance: textfield; }
+    input:focus, select:focus {
       border-color: var(--accent-2);
       transform: translateY(-1px);
     }
+    select {
+      appearance: none;
+      background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      color: var(--text);
+      position: relative;
+    }
+    select option { color: #0a1221; background: #f4f6fb; }
     .toggle {
       display: inline-flex;
       align-items: center;
@@ -314,7 +323,7 @@ INDEX_HTML = """
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 12px;
     }
-    .row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -385,11 +394,23 @@ INDEX_HTML = """
     <div class="row">
       <div class="card">
         <h3>Общие параметры</h3>
-        <label for="cron">Cron расписание</label>
-        <input id="cron" type="text" placeholder="*/10 * * * *" />
-        <label for="limit">Сколько постов забирать</label>
+        <label for="cronSimple">Частота проверки</label>
+        <select id="cronSimple">
+          <option value="*/5 * * * *">Каждые 5 минут</option>
+          <option value="*/10 * * * *">Каждые 10 минут</option>
+          <option value="*/15 * * * *">Каждые 15 минут</option>
+          <option value="*/30 * * * *">Каждые 30 минут</option>
+          <option value="0 * * * *">Каждый час</option>
+          <option value="custom">Кастомное cron-выражение</option>
+        </select>
+        <div id="cronCustomBlock" style="margin-top:10px; display:none;">
+          <label for="cron">Кастомный cron</label>
+          <input id="cron" type="text" placeholder="*/10 * * * *" />
+          <div class="error" id="cronError" style="display:none;"></div>
+        </div>
+        <label for="limit" style="margin-top:12px; display:block;">Сколько последних постов забирать</label>
         <input id="limit" type="number" min="1" max="100" />
-        <div class="row-inline">
+      <div class="row-inline" style="margin-top:8px;">
           <label class="toggle">
             <input type="checkbox" id="logDebug">
             <span class="dot"></span>
@@ -405,6 +426,7 @@ INDEX_HTML = """
         <input id="vkToken" type="text" placeholder="vk1.a...." />
         <label for="tgChannel">Канал Telegram</label>
         <input id="tgChannel" type="text" placeholder="@channel или ID" />
+        <div class="error" id="tgChannelError" style="display:none;"></div>
         <label for="tgToken">Telegram Bot Token (не обязательно, если в env)</label>
         <input id="tgToken" type="text" placeholder="1234:ABC..." />
         <div class="hint">Токены не отображаются, чтобы не светить секреты. Новое значение заменит сохранённое.</div>
@@ -421,6 +443,7 @@ INDEX_HTML = """
   </div>
 
   <div class="toast" id="toast"></div>
+  <div class="alert" id="alert"></div>
 
   <script>
     const communitiesEl = document.getElementById('communities');
@@ -433,6 +456,13 @@ INDEX_HTML = """
       toast.style.borderColor = isError ? 'rgba(255,127,157,0.5)' : 'rgba(124,231,160,0.4)';
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    function showAlert(text) {
+      const el = document.getElementById('alert');
+      el.textContent = text;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2400);
     }
 
     function badge(text, state) {
@@ -522,13 +552,40 @@ INDEX_HTML = """
         renderCommunities();
       });
       document.getElementById('saveBtn').addEventListener('click', saveConfig);
+      document.getElementById('cronSimple').addEventListener('change', (e) => {
+        const value = e.target.value;
+        const customBlock = document.getElementById('cronCustomBlock');
+        const cronInput = document.getElementById('cron');
+        if (value === 'custom') {
+          customBlock.style.display = 'block';
+          cronInput.focus();
+        } else {
+          customBlock.style.display = 'none';
+          cronInput.value = value;
+        }
+      });
+    }
+
+    function syncCronUI(cronValue) {
+      const simple = document.getElementById('cronSimple');
+      const customBlock = document.getElementById('cronCustomBlock');
+      const cronInput = document.getElementById('cron');
+      const known = ['*/5 * * * *','*/10 * * * *','*/15 * * * *','*/30 * * * *','0 * * * *'];
+      if (known.includes(cronValue)) {
+        simple.value = cronValue;
+        customBlock.style.display = 'none';
+      } else {
+        simple.value = 'custom';
+        customBlock.style.display = 'block';
+      }
+      cronInput.value = cronValue;
     }
 
     async function loadConfig() {
       try {
         const res = await fetch('/api/config');
         const data = await res.json();
-        document.getElementById('cron').value = data.general?.cron || '';
+        syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
         document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
         document.getElementById('tgChannel').value = data.telegram?.channel_id || '';
@@ -540,10 +597,36 @@ INDEX_HTML = """
       }
     }
 
+    function clearFieldErrors() {
+      ['tgChannel','cron'].forEach((id) => {
+        document.getElementById(id).classList.remove('invalid');
+      });
+      ['tgChannelError','cronError'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.style.display = 'none';
+          el.textContent = '';
+        }
+      });
+    }
+
+    function setFieldError(id, message) {
+      const input = document.getElementById(id);
+      const error = document.getElementById(id + 'Error');
+      if (input) input.classList.add('invalid');
+      if (error) {
+        error.textContent = message;
+        error.style.display = 'block';
+      } else {
+        showAlert(message);
+      }
+    }
+
     async function saveConfig() {
+      clearFieldErrors();
       const payload = {
         general: {
-          cron: document.getElementById('cron').value,
+          cron: document.getElementById('cron').value || document.getElementById('cronSimple').value,
           posts_limit: parseInt(document.getElementById('limit').value, 10),
           vk_api_version: '5.199',
           cache_file: 'data/cache.json',
@@ -566,12 +649,30 @@ INDEX_HTML = """
         });
         if (!res.ok) {
           const detail = await res.json().catch(() => ({}));
-          throw new Error(detail.detail || 'Ошибка сохранения');
+          let message = 'Ошибка сохранения';
+          if (detail?.detail) {
+            if (typeof detail.detail === 'string') {
+              message = detail.detail;
+            } else if (Array.isArray(detail.detail)) {
+              message = detail.detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
+              const field = detail.detail[0]?.loc?.slice(-1)[0];
+              if (field === 'channel_id') setFieldError('tgChannel', 'Укажите канал Telegram');
+              if (field === 'cron') setFieldError('cron', message);
+            } else if (detail.detail.field) {
+              if (detail.detail.field === 'telegram.channel_id') {
+                setFieldError('tgChannel', detail.detail.message || 'Укажите канал Telegram');
+              }
+              if (detail.detail.field === 'general.cron') {
+                setFieldError('cron', detail.detail.message || 'Неверный cron');
+              }
+            }
+          }
+          throw new Error(message);
         }
         showToast('Конфиг сохранён');
         loadConfig();
       } catch (err) {
-        showToast(err.message || 'Ошибка сохранения', true);
+        showAlert(err.message || 'Ошибка сохранения');
       }
     }
 
@@ -581,3 +682,28 @@ INDEX_HTML = """
 </body>
 </html>
 """
+    .error {
+      color: #ffb3c4;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .invalid {
+      border-color: rgba(255,127,157,0.7) !important;
+      box-shadow: 0 0 0 1px rgba(255,127,157,0.25);
+    }
+    .alert {
+      position: fixed;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.7);
+      color: #ffe9f0;
+      border: 1px solid rgba(255,127,157,0.4);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      z-index: 1000;
+    }
+    .alert.show { opacity: 1; }

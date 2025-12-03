@@ -145,7 +145,7 @@ def parse_config_dict(
     raw: Dict,
     require_tokens: bool = True,
     require_channel: bool = True,
-    require_communities: bool = True,
+    require_communities: bool = False,
 ) -> Config:
     general = _parse_general(raw.get("general", {}))
     vk = _parse_vk(raw.get("vk", {}), require_token=require_tokens)
@@ -160,7 +160,7 @@ def load_config(
     path: str | Path,
     require_tokens: bool = True,
     require_channel: bool = True,
-    require_communities: bool = True,
+    require_communities: bool = False,
     allow_missing: bool = False,
 ) -> Config:
     raw = _load_yaml(Path(path), allow_missing=allow_missing)
