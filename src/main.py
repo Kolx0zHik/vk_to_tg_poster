@@ -11,26 +11,21 @@ from .tg_client import TelegramClient
 from .vk_client import VKClient
 
 
-def build_app(config_path: str):
+def run_job(config_path: str, logger) -> None:
     config = load_config(config_path)
-    logger = configure_logging(config.general)
-    logger.info("Config loaded from %s", os.path.abspath(config_path))
-
     cache = Cache(config.general.cache_file)
     vk_client = VKClient(config.vk.token, api_version=config.general.vk_api_version)
     tg_client = TelegramClient(config.telegram.bot_token, config.telegram.channel_id)
-    return config, logger, cache, vk_client, tg_client
-
-
-def run_once(config_path: str) -> None:
-    config, logger, cache, vk_client, tg_client = build_app(config_path)
     process_communities(config, vk_client, tg_client, cache)
     logger.info("Run completed once.")
 
 
-def run_with_scheduler(config_path: str) -> None:
-    config, logger, cache, vk_client, tg_client = build_app(config_path)
-    scheduler = CronScheduler(config.general.cron, lambda: process_communities(config, vk_client, tg_client, cache), logger)
+def run_once(config_path: str, logger) -> None:
+    run_job(config_path, logger)
+
+
+def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
+    scheduler = CronScheduler(cron_expr, lambda: run_job(config_path, logger), logger)
     scheduler.start()
 
 
@@ -39,12 +34,21 @@ def main() -> None:
     run_mode = os.getenv("RUN_MODE", "scheduled")
 
     try:
-        if run_mode == "once":
-            run_once(config_path)
-        else:
-            run_with_scheduler(config_path)
+        config = load_config(config_path)
     except ConfigError as exc:
         print(f"Configuration error: {exc}")
+        raise SystemExit(1)
+
+    logger = configure_logging(config.general)
+    logger.info("Config loaded from %s", os.path.abspath(config_path))
+
+    try:
+        if run_mode == "once":
+            run_once(config_path, logger)
+        else:
+            run_with_scheduler(config.general.cron, config_path, logger)
+    except ConfigError as exc:
+        logger.error("Configuration error during run: %s", exc)
         raise SystemExit(1)
 
 

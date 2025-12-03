@@ -1,0 +1,583 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import List
+
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field, field_validator
+
+from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "config/config.yaml"))
+EXAMPLE_CONFIG = BASE_DIR / "config/config.example.yaml"
+
+app = FastAPI(title="VK → Telegram Poster", version="0.1.0")
+
+
+class LogRotationModel(BaseModel):
+    max_bytes: int = Field(10 * 1024 * 1024, ge=1024)
+    backup_count: int = Field(5, ge=1)
+
+
+class GeneralModel(BaseModel):
+    cron: str
+    vk_api_version: str = "5.199"
+    posts_limit: int = Field(10, ge=1, le=100)
+    cache_file: str = "data/cache.json"
+    log_file: str = "logs/poster.log"
+    log_level: str = Field("INFO", pattern=r"(?i)^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    log_rotation: LogRotationModel = LogRotationModel()
+
+    @field_validator("cron")
+    @classmethod
+    def cron_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Cron выражение не должно быть пустым")
+        return value
+
+
+class TokenModel(BaseModel):
+    token: str = ""
+
+
+class TelegramModel(BaseModel):
+    channel_id: str
+    bot_token: str = ""
+
+    @field_validator("channel_id")
+    @classmethod
+    def channel_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Не указан канал Telegram")
+        return value
+
+
+class ContentTypesModel(BaseModel):
+    text: bool = True
+    photo: bool = True
+    video: bool = True
+    audio: bool = True
+    link: bool = True
+
+
+class CommunityModel(BaseModel):
+    id: int
+    name: str
+    active: bool = True
+    content_types: ContentTypesModel = ContentTypesModel()
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Имя сообщества не может быть пустым")
+        return value
+
+
+class SaveRequest(BaseModel):
+    general: GeneralModel
+    vk: TokenModel = TokenModel()
+    telegram: TelegramModel
+    communities: List[CommunityModel] = Field(min_length=1)
+
+    @field_validator("communities")
+    @classmethod
+    def unique_ids(cls, value: List[CommunityModel]) -> List[CommunityModel]:
+        ids = [c.id for c in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("ID сообществ должны быть уникальны")
+        return value
+
+
+def _read_raw_config(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _load_ui_config() -> dict:
+    try:
+        config = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+    except ConfigError:
+        fallback = EXAMPLE_CONFIG if EXAMPLE_CONFIG.exists() else CONFIG_PATH
+        config = load_config(
+            fallback,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+    return config_to_dict(config)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> HTMLResponse:
+    return HTMLResponse(content=INDEX_HTML)
+
+
+@app.get("/api/config")
+async def get_config() -> dict:
+    data = _load_ui_config()
+    vk_token_set = bool(data.get("vk", {}).get("token") or os.getenv("VK_API_TOKEN"))
+    tg_token_set = bool(data.get("telegram", {}).get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN"))
+    data["vk"] = {"token_set": vk_token_set}
+    data["telegram"] = {"channel_id": data.get("telegram", {}).get("channel_id", ""), "bot_token_set": tg_token_set}
+    return data
+
+
+@app.post("/api/config")
+async def save_config(payload: SaveRequest) -> dict:
+    current = _read_raw_config(CONFIG_PATH)
+
+    merged = {
+        "general": payload.general.model_dump(),
+        "vk": {"token": payload.vk.token or current.get("vk", {}).get("token", "")},
+        "telegram": {
+            "channel_id": payload.telegram.channel_id,
+            "bot_token": payload.telegram.bot_token or current.get("telegram", {}).get("bot_token", ""),
+        },
+        "communities": [community.model_dump() for community in payload.communities],
+    }
+
+    try:
+        # Validate structure; tokens may be пустыми, но канал обязателен.
+        parse_config_dict(
+            merged,
+            require_tokens=False,
+            require_channel=True,
+            require_communities=True,
+        )
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    save_config_dict(merged, CONFIG_PATH)
+    return {"ok": True}
+
+
+INDEX_HTML = """
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VK → Telegram Poster · Настройки</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: radial-gradient(120% 120% at 20% 20%, #1f4aa8 0%, #0c1a33 35%, #070c16 70%);
+      --card: rgba(255,255,255,0.04);
+      --stroke: rgba(255,255,255,0.08);
+      --accent: #7ce7a0;
+      --accent-2: #5da0ff;
+      --danger: #ff7f9d;
+      --text: #f4f6fb;
+      --muted: #a6b1c2;
+      --shadow: 0 20px 40px rgba(0,0,0,0.45);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 20px;
+      border: 1px solid var(--stroke);
+      background: linear-gradient(135deg, rgba(92,160,255,0.12), rgba(124,231,160,0.08));
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+      letter-spacing: -0.02em;
+    }
+    .hero p { margin: 0; color: var(--muted); }
+    .badge-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .badge {
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.05);
+    }
+    .pill {
+      background: rgba(124,231,160,0.08);
+      border-color: rgba(124,231,160,0.35);
+      color: #d5ffe4;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      letter-spacing: -0.01em;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s ease, transform 0.15s ease;
+    }
+    input:focus {
+      border-color: var(--accent-2);
+      transform: translateY(-1px);
+    }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--stroke);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle input { display: none; }
+    .dot {
+      width: 34px; height: 18px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.1);
+      position: relative;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+    .dot::after {
+      content: '';
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .toggle input:checked + .dot {
+      background: rgba(124,231,160,0.15);
+      border-color: rgba(124,231,160,0.5);
+    }
+    .toggle input:checked + .dot::after {
+      transform: translateX(16px);
+      background: var(--accent);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: linear-gradient(135deg, rgba(93,160,255,0.2), rgba(124,231,160,0.12));
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.2s ease;
+      box-shadow: var(--shadow);
+    }
+    .btn:hover { transform: translateY(-1px) scale(1.01); }
+    .btn.save {
+      background: linear-gradient(135deg, #5da0ff, #7ce7a0);
+      color: #041022;
+      border: none;
+      box-shadow: 0 12px 30px rgba(92,160,255,0.3);
+    }
+    .btn.danger {
+      background: linear-gradient(135deg, rgba(255,127,157,0.2), rgba(255,127,157,0.32));
+      border-color: rgba(255,127,157,0.4);
+      color: #ffe9f0;
+    }
+    .communities { display: grid; gap: 12px; }
+    .community {
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.03);
+      display: grid;
+      gap: 10px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.8);
+      color: #dfffe4;
+      border: 1px solid rgba(124,231,160,0.4);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    @media (max-width: 720px) {
+      .hero { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <h1>VK → Telegram Poster</h1>
+        <p>Управление конфигурацией. Токены можно передавать через .env; они не отображаются здесь.</p>
+        <div class="badge-row" id="statusBadges"></div>
+      </div>
+      <button class="btn save" id="saveBtn">Сохранить</button>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h3>Общие параметры</h3>
+        <label for="cron">Cron расписание</label>
+        <input id="cron" type="text" placeholder="*/10 * * * *" />
+        <label for="limit">Сколько постов забирать</label>
+        <input id="limit" type="number" min="1" max="100" />
+        <div class="row-inline">
+          <label class="toggle">
+            <input type="checkbox" id="logDebug">
+            <span class="dot"></span>
+            <span>Debug логирование</span>
+          </label>
+        </div>
+        <div class="hint">Файлы логов и кеш пути: задаются в config.yaml, остаются без изменений.</div>
+      </div>
+
+      <div class="card">
+        <h3>Токены</h3>
+        <label for="vkToken">VK сервисный токен (не обязательно, если в env)</label>
+        <input id="vkToken" type="text" placeholder="vk1.a...." />
+        <label for="tgChannel">Канал Telegram</label>
+        <input id="tgChannel" type="text" placeholder="@channel или ID" />
+        <label for="tgToken">Telegram Bot Token (не обязательно, если в env)</label>
+        <input id="tgToken" type="text" placeholder="1234:ABC..." />
+        <div class="hint">Токены не отображаются, чтобы не светить секреты. Новое значение заменит сохранённое.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <h3>Сообщества</h3>
+        <button class="btn" id="addCommunity">+ Добавить сообщество</button>
+      </div>
+      <div class="communities" id="communities"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const communitiesEl = document.getElementById('communities');
+    const statusBadges = document.getElementById('statusBadges');
+    let communities = [];
+
+    function showToast(text, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = text;
+      toast.style.borderColor = isError ? 'rgba(255,127,157,0.5)' : 'rgba(124,231,160,0.4)';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    function badge(text, state) {
+      return `<span class="badge ${state ? 'pill' : ''}">${text}</span>`;
+    }
+
+    function renderBadges(data) {
+      statusBadges.innerHTML = [
+        badge('Cron: ' + (data.general?.cron || '—'), true),
+        badge('VK token: ' + (data.vk?.token_set ? 'установлен' : 'нет'), data.vk?.token_set),
+        badge('TG token: ' + (data.telegram?.bot_token_set ? 'установлен' : 'нет'), data.telegram?.bot_token_set),
+        badge('Сообществ: ' + (data.communities?.length || 0), true),
+      ].join('');
+    }
+
+    function renderCommunities() {
+      communitiesEl.innerHTML = '';
+      communities.forEach((c, idx) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'community';
+        wrapper.innerHTML = `
+          <div class="row">
+            <div>
+              <label>ID сообщества</label>
+              <input type="number" data-field="id" value="${c.id}" />
+            </div>
+            <div>
+              <label>Имя</label>
+              <input type="text" data-field="name" value="${c.name}" />
+            </div>
+            <div style="display:flex; align-items:flex-end;">
+              <label class="toggle" style="margin:0;">
+                <input type="checkbox" data-field="active" ${c.active ? 'checked' : ''}>
+                <span class="dot"></span>
+                <span>Активно</span>
+              </label>
+            </div>
+          </div>
+          <div class="grid">
+            ${['text','photo','video','audio','link'].map(type => `
+              <label class="toggle">
+                <input type="checkbox" data-field="${type}" ${c.content_types[type] ? 'checked' : ''}>
+                <span class="dot"></span>
+                <span>${type}</span>
+              </label>
+            `).join('')}
+          </div>
+          <div style="display:flex; justify-content:flex-end;">
+            <button class="btn danger" data-remove="${idx}">Удалить</button>
+          </div>
+        `;
+        communitiesEl.appendChild(wrapper);
+      });
+    }
+
+    function collectCommunities() {
+      const cards = [...communitiesEl.querySelectorAll('.community')];
+      return cards.map(card => {
+        const obj = {
+          id: parseInt(card.querySelector('input[data-field="id"]').value, 10),
+          name: card.querySelector('input[data-field="name"]').value,
+          active: card.querySelector('input[data-field="active"]').checked,
+          content_types: {}
+        };
+        ['text','photo','video','audio','link'].forEach(type => {
+          obj.content_types[type] = card.querySelector('input[data-field="'+type+'"]').checked;
+        });
+        return obj;
+      });
+    }
+
+    function attachHandlers() {
+      communitiesEl.addEventListener('click', (e) => {
+        const removeIdx = e.target.getAttribute('data-remove');
+        if (removeIdx !== null) {
+          communities.splice(parseInt(removeIdx, 10), 1);
+          renderCommunities();
+        }
+      });
+      document.getElementById('addCommunity').addEventListener('click', () => {
+        communities.push({
+          id: Math.floor(Math.random() * 100000) * -1,
+          name: 'new_community',
+          active: true,
+          content_types: { text: true, photo: true, video: false, audio: false, link: true },
+        });
+        renderCommunities();
+      });
+      document.getElementById('saveBtn').addEventListener('click', saveConfig);
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        document.getElementById('cron').value = data.general?.cron || '';
+        document.getElementById('limit').value = data.general?.posts_limit || 10;
+        document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
+        document.getElementById('tgChannel').value = data.telegram?.channel_id || '';
+        communities = data.communities || [];
+        renderCommunities();
+        renderBadges(data);
+      } catch (err) {
+        showToast('Не удалось загрузить конфиг', true);
+      }
+    }
+
+    async function saveConfig() {
+      const payload = {
+        general: {
+          cron: document.getElementById('cron').value,
+          posts_limit: parseInt(document.getElementById('limit').value, 10),
+          vk_api_version: '5.199',
+          cache_file: 'data/cache.json',
+          log_file: 'logs/poster.log',
+          log_level: document.getElementById('logDebug').checked ? 'DEBUG' : 'INFO',
+          log_rotation: { max_bytes: 10485760, backup_count: 5 },
+        },
+        vk: { token: document.getElementById('vkToken').value.trim() },
+        telegram: {
+          channel_id: document.getElementById('tgChannel').value.trim(),
+          bot_token: document.getElementById('tgToken').value.trim(),
+        },
+        communities: collectCommunities(),
+      };
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => ({}));
+          throw new Error(detail.detail || 'Ошибка сохранения');
+        }
+        showToast('Конфиг сохранён');
+        loadConfig();
+      } catch (err) {
+        showToast(err.message || 'Ошибка сохранения', true);
+      }
+    }
+
+    attachHandlers();
+    loadConfig();
+  </script>
+</body>
+</html>
+"""

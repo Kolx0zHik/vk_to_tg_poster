@@ -1,11 +1,13 @@
 version: "3.9"
 
 services:
-  poster:
+  app:
     build: .
     env_file: .env
+    ports:
+      - "8000:8000"
     volumes:
-      - ./config:/app/config:ro
+      - ./config:/app/config
       - ./logs:/app/logs
       - ./data:/app/data
-    command: ["python", "-m", "src.main"]
+    command: ["./entrypoint.sh"]

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import List
+from typing import List, Optional
 
 import requests
 
@@ -9,6 +10,11 @@ from .config import ContentTypes
 from .models import Attachment, Post
 
 logger = logging.getLogger("poster.tg")
+
+
+def _vk_link_keyboard(url: str) -> str:
+    keyboard = {"inline_keyboard": [[{"text": "Открыть пост в VK", "url": url}]]}
+    return json.dumps(keyboard, ensure_ascii=False)
 
 
 class TelegramClient:
@@ -27,49 +33,60 @@ class TelegramClient:
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram API returned error for {method}: {payload}")
 
-    def send_text(self, text: str) -> None:
+    def send_text(self, text: str, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending text message to Telegram")
-        self._post("sendMessage", {"chat_id": self.channel_id, "text": text, "disable_web_page_preview": False})
+        data = {"chat_id": self.channel_id, "text": text, "disable_web_page_preview": False}
+        if vk_url:
+            data["reply_markup"] = _vk_link_keyboard(vk_url)
+        self._post("sendMessage", data)
 
-    def send_photo(self, photo_url: str, caption: str | None = None) -> None:
+    def send_photo(self, photo_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending photo to Telegram")
         data = {"chat_id": self.channel_id, "photo": photo_url}
         if caption:
             data["caption"] = caption
+        if vk_url:
+            data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendPhoto", data)
 
-    def send_video(self, video_url: str, caption: str | None = None) -> None:
+    def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending video to Telegram")
         data = {"chat_id": self.channel_id, "video": video_url}
         if caption:
             data["caption"] = caption
+        if vk_url:
+            data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendVideo", data)
 
-    def send_audio(self, audio_url: str, caption: str | None = None) -> None:
+    def send_audio(self, audio_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending audio to Telegram")
         data = {"chat_id": self.channel_id, "audio": audio_url}
         if caption:
             data["caption"] = caption
+        if vk_url:
+            data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendAudio", data)
 
-    def send_link(self, link_url: str, title: str | None = None) -> None:
+    def send_link(self, link_url: str, title: str | None = None, vk_url: Optional[str] = None) -> None:
         text = f"{title or ''}\n{link_url}" if title else link_url
-        self.send_text(text.strip())
+        self.send_text(text.strip(), vk_url=vk_url)
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
+        vk_url = post.vk_link
+
         if allowed.text and post.text:
-            self.send_text(post.text)
+            self.send_text(post.text, vk_url=vk_url)
 
         attachments = self._filter_attachments(post.attachments, allowed)
         for attachment in attachments:
             if attachment.type == "photo":
-                self.send_photo(attachment.url)
+                self.send_photo(attachment.url, vk_url=vk_url)
             elif attachment.type == "video":
-                self.send_video(attachment.url, caption=attachment.title)
+                self.send_video(attachment.url, caption=attachment.title, vk_url=vk_url)
             elif attachment.type == "audio":
-                self.send_audio(attachment.url, caption=attachment.title)
+                self.send_audio(attachment.url, caption=attachment.title, vk_url=vk_url)
             elif attachment.type == "link":
-                self.send_link(attachment.url, title=attachment.title)
+                self.send_link(attachment.url, title=attachment.title, vk_url=vk_url)
 
     @staticmethod
     def _filter_attachments(attachments: List[Attachment], allowed: ContentTypes) -> List[Attachment]:

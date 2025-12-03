@@ -34,7 +34,15 @@ class VKClient:
         for item in items:
             attachments = self._parse_attachments(item.get("attachments", []))
             text = item.get("text", "") or ""
-            posts.append(Post(id=item["id"], owner_id=item["owner_id"], text=text, attachments=attachments))
+            posts.append(
+                Post(
+                    id=item["id"],
+                    owner_id=item["owner_id"],
+                    text=text,
+                    attachments=attachments,
+                    is_pinned=bool(item.get("is_pinned", 0)),
+                )
+            )
         return posts
 
     def _parse_attachments(self, raw_attachments) -> List[Attachment]:

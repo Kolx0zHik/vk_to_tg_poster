@@ -8,8 +8,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY entrypoint.sh .
 COPY src ./src
 COPY config ./config
 COPY data ./data
 
-CMD ["python", "-m", "src.main"]
+EXPOSE 8000
+CMD ["./entrypoint.sh"]

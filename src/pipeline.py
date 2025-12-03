@@ -13,12 +13,7 @@ logger = logging.getLogger("poster.pipeline")
 
 
 def _post_hash(post: Post, allowed: ContentTypes) -> str:
-    relevant_attachments = [
-        f"{att.type}:{att.url}"
-        for att in post.attachments
-        if getattr(allowed, att.type, False)
-    ]
-    payload = f"{post.text}|{'|'.join(sorted(relevant_attachments))}"
+    payload = f"{post.owner_id}_{post.id}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
