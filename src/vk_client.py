@@ -65,3 +65,21 @@ class VKClient:
             elif att_type == "link":
                 parsed.append(Attachment(type="link", url=data.get("url", ""), title=data.get("title")))
         return parsed
+
+    def resolve_screen_name(self, screen_name: str) -> tuple[str, int]:
+        params = {
+            "screen_name": screen_name,
+            "access_token": self.token,
+            "v": self.api_version,
+        }
+        resp = self.session.get("https://api.vk.com/method/utils.resolveScreenName", params=params, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
+        if "error" in payload:
+            raise RuntimeError(f"VK API error: {payload['error']}")
+        resp_obj = payload.get("response") or {}
+        object_id = resp_obj.get("object_id")
+        object_type = resp_obj.get("type")
+        if not object_id or not object_type:
+            raise RuntimeError("VK API did not resolve screen name")
+        return object_type, int(object_id)

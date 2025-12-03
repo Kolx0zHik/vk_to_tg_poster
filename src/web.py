@@ -58,7 +58,7 @@ class ContentTypesModel(BaseModel):
 
 
 class CommunityModel(BaseModel):
-    id: int
+    id: str
     name: str
     active: bool = True
     content_types: ContentTypesModel = ContentTypesModel()
@@ -80,7 +80,7 @@ class SaveRequest(BaseModel):
     @field_validator("communities")
     @classmethod
     def unique_ids(cls, value: List[CommunityModel]) -> List[CommunityModel]:
-        ids = [c.id for c in value]
+        ids = [c.id.strip().lower() for c in value]
         if len(ids) != len(set(ids)):
             raise ValueError("ID сообществ должны быть уникальны")
         return value
@@ -324,6 +324,31 @@ INDEX_HTML = """
       gap: 12px;
     }
     .row-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .error {
+      color: #ffb3c4;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .invalid {
+      border-color: rgba(255,127,157,0.7) !important;
+      box-shadow: 0 0 0 1px rgba(255,127,157,0.25);
+    }
+    .alert {
+      position: fixed;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.7);
+      color: #ffe9f0;
+      border: 1px solid rgba(255,127,157,0.4);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      z-index: 1000;
+    }
+    .alert.show { opacity: 1; }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -486,8 +511,8 @@ INDEX_HTML = """
         wrapper.innerHTML = `
           <div class="row">
             <div>
-              <label>ID сообщества</label>
-              <input type="number" data-field="id" value="${c.id}" />
+              <label>ID/ссылка/короткое имя</label>
+              <input type="text" data-field="id" value="${c.id}" placeholder="club123, https://vk.com/club123, poputiuren" />
             </div>
             <div>
               <label>Имя</label>
@@ -522,7 +547,7 @@ INDEX_HTML = """
       const cards = [...communitiesEl.querySelectorAll('.community')];
       return cards.map(card => {
         const obj = {
-          id: parseInt(card.querySelector('input[data-field="id"]').value, 10),
+          id: card.querySelector('input[data-field="id"]').value.trim(),
           name: card.querySelector('input[data-field="name"]').value,
           active: card.querySelector('input[data-field="active"]').checked,
           content_types: {}
@@ -544,7 +569,7 @@ INDEX_HTML = """
       });
       document.getElementById('addCommunity').addEventListener('click', () => {
         communities.push({
-          id: Math.floor(Math.random() * 100000) * -1,
+          id: '',
           name: 'new_community',
           active: true,
           content_types: { text: true, photo: true, video: false, audio: false, link: true },
@@ -682,28 +707,3 @@ INDEX_HTML = """
 </body>
 </html>
 """
-    .error {
-      color: #ffb3c4;
-      font-size: 13px;
-      margin-top: 4px;
-    }
-    .invalid {
-      border-color: rgba(255,127,157,0.7) !important;
-      box-shadow: 0 0 0 1px rgba(255,127,157,0.25);
-    }
-    .alert {
-      position: fixed;
-      top: 40px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 16px;
-      border-radius: 12px;
-      background: rgba(0,0,0,0.7);
-      color: #ffe9f0;
-      border: 1px solid rgba(255,127,157,0.4);
-      box-shadow: var(--shadow);
-      opacity: 0;
-      transition: opacity 0.2s ease;
-      z-index: 1000;
-    }
-    .alert.show { opacity: 1; }

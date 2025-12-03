@@ -47,7 +47,7 @@ class ContentTypes:
 
 @dataclass
 class Community:
-    id: int
+    id: str
     name: str
     active: bool = True
     content_types: ContentTypes = field(default_factory=ContentTypes)
@@ -132,7 +132,7 @@ def _parse_communities(raw_list: Optional[List[Dict]]) -> List[Community]:
         content_types = _parse_content_types(raw.get("content_types"))
         communities.append(
             Community(
-                id=int(raw.get("id")),
+                id=str(raw.get("id")),
                 name=str(raw.get("name", "")),
                 active=bool(raw.get("active", True)),
                 content_types=content_types,
