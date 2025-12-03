@@ -26,6 +26,17 @@ def _escape_html(text: str) -> str:
     )
 
 
+def _build_caption_with_link(text: str, vk_url: str, max_len: int = 1024) -> str:
+    link_html = f'<a href="{vk_url}">Открыть пост в VK</a>'
+    if not text:
+        return link_html
+    text_html = _escape_html(text)
+    reserve = len(link_html) + 2  # for \n\n
+    if len(text_html) + reserve > max_len:
+        text_html = text_html[: max_len - reserve - 3] + "..."
+    return f"{text_html}\n\n{link_html}"
+
+
 class TelegramClient:
     def __init__(self, bot_token: str, channel_id: str):
         self.bot_token = bot_token
@@ -117,23 +128,9 @@ class TelegramClient:
                 parse_mode="HTML" if caption else None,
             )
             text_used = bool(caption)
-        # Множественные фото: отправляем альбом, caption в первом со ссылкой на VK.
+        # Множественные фото: отправляем альбом без caption, затем текст отдельным сообщением с кнопкой.
         elif len(photos) > 1:
-            caption_parts = []
-            if allowed.text and post.text:
-                caption_parts.append(_escape_html(post.text))
-            if vk_url:
-                caption_parts.append("")
-                caption_parts.append(f'<a href="{vk_url}">Открыть пост в VK</a>')
-            caption_full = "\n".join(caption_parts) if caption_parts else None
-            media = []
-            for idx, photo in enumerate(photos):
-                item = {"type": "photo", "media": photo.url}
-                if idx == 0 and caption_full:
-                    item["caption"] = caption_full[:1024]  # Telegram caption limit
-                    item["parse_mode"] = "HTML"
-                media.append(item)
-            # Telegram rate limits media groups; retry once on 429.
+            media = [{"type": "photo", "media": photo.url} for photo in photos]
             try:
                 self.send_media_group(media)
             except RuntimeError as exc:
@@ -145,7 +142,10 @@ class TelegramClient:
                     self.send_media_group(media)
                 else:
                     raise
-            text_used = bool(caption_parts)
+            # Отдельным сообщением отправляем текст + кнопку на VK.
+            if allowed.text and post.text:
+                self.send_text(_escape_html(post.text), vk_url=vk_url)
+                text_used = True
 
         # Видео/аудио
         for video in videos:
