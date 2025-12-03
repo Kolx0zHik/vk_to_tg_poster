@@ -82,9 +82,16 @@ class TelegramClient:
             if attachment.type == "photo":
                 self.send_photo(attachment.url, vk_url=vk_url)
             elif attachment.type == "video":
-                self.send_video(attachment.url, caption=attachment.title, vk_url=vk_url)
+                # Telegram требует реальный видео-файл; если URL пустой или не mp4 — отправляем ссылкой.
+                if attachment.url and attachment.url.endswith((".mp4", ".mov", ".mkv")):
+                    self.send_video(attachment.url, caption=attachment.title, vk_url=vk_url)
+                else:
+                    self.send_link(attachment.url or vk_url, title=attachment.title or "Видео", vk_url=vk_url)
             elif attachment.type == "audio":
-                self.send_audio(attachment.url, caption=attachment.title, vk_url=vk_url)
+                if attachment.url:
+                    self.send_audio(attachment.url, caption=attachment.title, vk_url=vk_url)
+                else:
+                    self.send_link(vk_url, title=attachment.title or "Аудио", vk_url=vk_url)
             elif attachment.type == "link":
                 self.send_link(attachment.url, title=attachment.title, vk_url=vk_url)
 

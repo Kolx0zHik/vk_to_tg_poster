@@ -58,6 +58,11 @@ class VKClient:
                     parsed.append(Attachment(type="photo", url=sizes[0].get("url", "")))
             elif att_type == "video":
                 url = data.get("player") or ""
+                if not url and data.get("owner_id") and data.get("id"):
+                    # Fallback to clickable VK link if direct player URL отсутствует
+                    url = f"https://vk.com/video{data.get('owner_id')}_{data.get('id')}"
+                    if data.get("access_key"):
+                        url += f"?access_key={data.get('access_key')}"
                 parsed.append(Attachment(type="video", url=url, title=data.get("title")))
             elif att_type == "audio":
                 title = f"{data.get('artist', '')} - {data.get('title', '')}".strip(" -")
