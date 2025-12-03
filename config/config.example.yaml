@@ -1,0 +1,37 @@
+general:
+  cron: "*/10 * * * *"  # every 10 minutes
+  vk_api_version: "5.199"
+  posts_limit: 10
+  cache_file: "data/cache.json"
+  log_file: "logs/poster.log"
+  log_level: "INFO"
+  log_rotation:
+    max_bytes: 10485760  # 10 MB
+    backup_count: 5
+
+vk:
+  token: "VK_SERVICE_TOKEN"
+
+telegram:
+  bot_token: "TELEGRAM_BOT_TOKEN"
+  channel_id: "@your_channel"
+
+communities:
+  - id: -1
+    name: "example_community"
+    active: true
+    content_types:
+      text: true
+      photo: true
+      video: false
+      audio: false
+      link: true
+  - id: -2
+    name: "music_public"
+    active: false
+    content_types:
+      text: true
+      photo: false
+      video: false
+      audio: true
+      link: false

@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  poster:
+    build: .
+    env_file: .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./data:/app/data
+    command: ["python", "-m", "src.main"]
