@@ -17,6 +17,15 @@ def _vk_link_keyboard(url: str) -> str:
     return json.dumps(keyboard, ensure_ascii=False)
 
 
+def _escape_html(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 class TelegramClient:
     def __init__(self, bot_token: str, channel_id: str):
         self.bot_token = bot_token
@@ -74,9 +83,11 @@ class TelegramClient:
         text = f"{title or ''}\n{link_url}" if title else link_url
         self.send_text(text.strip(), vk_url=vk_url)
 
-    def send_media_group(self, media: List[dict]) -> None:
+    def send_media_group(self, media: List[dict], parse_mode: Optional[str] = None) -> None:
         logger.debug("Sending media group to Telegram (%s items)", len(media))
         data = {"chat_id": self.channel_id, "media": media}
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         self._post("sendMediaGroup", data, json_mode=True)
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
@@ -95,19 +106,22 @@ class TelegramClient:
             caption = post.text if allowed.text else None
             self.send_photo(photos[0].url, caption=caption, vk_url=vk_url)
             text_used = bool(caption)
-        # Множественные фото: отправляем альбом, caption в первом, потом отдельное сообщение с кнопкой.
+        # Множественные фото: отправляем альбом, caption в первом со ссылкой на VK.
         elif len(photos) > 1:
-            caption = post.text if allowed.text else None
+            caption_parts = []
+            if allowed.text and post.text:
+                caption_parts.append(_escape_html(post.text))
+            if vk_url:
+                caption_parts.append(f'<a href="{vk_url}">Открыть пост в VK</a>')
+            caption_full = "\n".join(caption_parts) if caption_parts else None
             media = []
             for idx, photo in enumerate(photos):
                 item = {"type": "photo", "media": photo.url}
-                if idx == 0 and caption:
-                    item["caption"] = caption
+                if idx == 0 and caption_full:
+                    item["caption"] = caption_full
                 media.append(item)
-            self.send_media_group(media)
-            # После альбома Telegram не поддерживает inline-кнопки, поэтому даём ссылку текстом.
-            self.send_text(f"Открыть пост в VK: {vk_url}", use_keyboard=False)
-            text_used = bool(caption)
+            self.send_media_group(media, parse_mode="HTML")
+            text_used = bool(caption_parts)
 
         # Видео/аудио
         for video in videos:
