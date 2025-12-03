@@ -36,10 +36,10 @@ class TelegramClient:
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram API returned error for {method}: {payload}")
 
-    def send_text(self, text: str, vk_url: Optional[str] = None) -> None:
+    def send_text(self, text: str, vk_url: Optional[str] = None, use_keyboard: bool = True) -> None:
         logger.debug("Sending text message to Telegram")
         data = {"chat_id": self.channel_id, "text": text, "disable_web_page_preview": False}
-        if vk_url:
+        if vk_url and use_keyboard:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post("sendMessage", data)
 
@@ -105,8 +105,8 @@ class TelegramClient:
                     item["caption"] = caption
                 media.append(item)
             self.send_media_group(media)
-            # Добавляем кнопку, чтобы была ссылка на VK.
-            self.send_text("Открыть пост в VK", vk_url=vk_url)
+            # После альбома Telegram не поддерживает inline-кнопки, поэтому даём ссылку текстом.
+            self.send_text(f"Открыть пост в VK: {vk_url}", use_keyboard=False)
             text_used = bool(caption)
 
         # Видео/аудио
