@@ -79,9 +79,22 @@ class TelegramClient:
             time.sleep(delay)
             self._post(method, data, json_mode=json_mode)
 
-    def send_text(self, text: str, vk_url: Optional[str] = None, use_keyboard: bool = True) -> None:
+    def send_text(
+        self,
+        text: str,
+        vk_url: Optional[str] = None,
+        use_keyboard: bool = True,
+        parse_mode: Optional[str] = None,
+        disable_preview: bool = False,
+    ) -> None:
         logger.debug("Sending text message to Telegram")
-        data = {"chat_id": self.channel_id, "text": text, "disable_web_page_preview": False}
+        data = {
+            "chat_id": self.channel_id,
+            "text": text,
+            "disable_web_page_preview": disable_preview,
+        }
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         if vk_url and use_keyboard:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post_with_retry("sendMessage", data)
@@ -162,11 +175,46 @@ class TelegramClient:
 
         # Видео/аудио
         for video in videos:
+            stats_parts = []
+            if video.views is not None:
+                stats_parts.append(f"Просмотры: {video.views}")
+            if video.likes is not None:
+                stats_parts.append(f"Лайки: {video.likes}")
+            stats_text = " | ".join(stats_parts)
+
             if video.url and video.url.endswith((".mp4", ".mov", ".mkv")):
-                self.send_video(video.url, caption=post.text if (allowed.text and not text_used) else video.title, vk_url=vk_url)
+                caption_parts = []
+                if allowed.text and post.text and not text_used:
+                    caption_parts.append(_escape_html(post.text))
+                if stats_text:
+                    caption_parts.append(stats_text)
+                caption = "\n\n".join(part for part in caption_parts if part)
+                self.send_video(
+                    video.url,
+                    caption=caption if caption else None,
+                    vk_url=vk_url,
+                )
                 text_used = text_used or bool(post.text)
             else:
-                self.send_link(video.url or vk_url, title=video.title or "Видео", vk_url=vk_url)
+                link_url = video.url or vk_url
+                base_text = post.text if (allowed.text and post.text and not text_used) else ""
+                link_text = _escape_html(video.title) if video.title else "Видео"
+                if link_url:
+                    text_body_parts = []
+                    if base_text:
+                        text_body_parts.append(_escape_html(base_text))
+                    link_html = f'<a href="{link_url}">{link_text}</a>'
+                    text_body_parts.append(link_html)
+                    if stats_text:
+                        text_body_parts.append(stats_text)
+                    text_body = "\n\n".join(text_body_parts)
+                    self.send_text(text_body, vk_url=vk_url, parse_mode="HTML", disable_preview=False)
+                    text_used = text_used or bool(base_text)
+                else:
+                    residual = [link_text]
+                    if stats_text:
+                        residual.append(stats_text)
+                    self.send_text("\n".join(residual), vk_url=vk_url)
 
         for audio in audios:
             if audio.url:

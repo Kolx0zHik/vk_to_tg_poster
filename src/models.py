@@ -7,6 +7,8 @@ class Attachment:
     type: str
     url: str
     title: Optional[str] = None
+    likes: Optional[int] = None
+    views: Optional[int] = None
 
 
 @dataclass

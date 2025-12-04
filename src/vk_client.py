@@ -62,6 +62,14 @@ class VKClient:
         for att in raw_attachments:
             att_type = att.get("type")
             data = att.get(att_type, {})
+
+            def _count(val):
+                if isinstance(val, dict):
+                    return val.get("count")
+                if isinstance(val, int):
+                    return val
+                return None
+
             if att_type == "photo":
                 sizes = data.get("sizes", [])
                 if sizes:
@@ -75,7 +83,15 @@ class VKClient:
                     url = f"https://vk.com/video{data.get('owner_id')}_{data.get('id')}"
                     if data.get("access_key"):
                         url += f"?access_key={data.get('access_key')}"
-                parsed.append(Attachment(type="video", url=url, title=data.get("title")))
+                parsed.append(
+                    Attachment(
+                        type="video",
+                        url=url,
+                        title=data.get("title"),
+                        likes=_count(data.get("likes")),
+                        views=_count(data.get("views")),
+                    )
+                )
             elif att_type == "audio":
                 title = f"{data.get('artist', '')} - {data.get('title', '')}".strip(" -")
                 parsed.append(Attachment(type="audio", url=data.get("url", ""), title=title))
