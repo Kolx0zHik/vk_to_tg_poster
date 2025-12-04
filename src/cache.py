@@ -20,6 +20,9 @@ class Cache:
         except Exception:
             # In case of corrupted cache we start fresh.
             self._store = {}
+        # ensure global bucket exists
+        if "_global" not in self._store:
+            self._store["_global"] = set()
 
     def _persist(self) -> None:
         serializable = {k: list(v) for k, v in self._store.items()}
@@ -27,11 +30,12 @@ class Cache:
 
     def is_duplicate(self, community_id: int, post_hash: str) -> bool:
         key = str(community_id)
-        return post_hash in self._store.get(key, set())
+        return post_hash in self._store.get(key, set()) or post_hash in self._store.get("_global", set())
 
     def remember(self, community_id: int, post_hash: str) -> None:
         key = str(community_id)
         if key not in self._store:
             self._store[key] = set()
         self._store[key].add(post_hash)
+        self._store["_global"].add(post_hash)
         self._persist()

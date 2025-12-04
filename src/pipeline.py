@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from typing import List
 
@@ -12,9 +11,15 @@ from .vk_client import VKClient
 logger = logging.getLogger("poster.pipeline")
 
 
-def _post_hash(post: Post, allowed: ContentTypes) -> str:
-    payload = f"{post.owner_id}_{post.id}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _dedup_key(post: Post) -> str:
+    """
+    Build a deduplication key:
+    - Prefer original post ids from copy_history (source_owner_id/source_post_id) if present.
+    - Fallback to current post owner/id.
+    """
+    owner = post.source_owner_id if post.source_owner_id is not None else post.owner_id
+    pid = post.source_post_id if post.source_post_id is not None else post.id
+    return f"{owner}_{pid}"
 
 
 def _should_publish(post: Post, allowed: ContentTypes) -> bool:
@@ -83,7 +88,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         for post in reversed(posts):
             if not _should_publish(post, community.content_types):
                 continue
-            digest = _post_hash(post, community.content_types)
+            digest = _dedup_key(post)
             if cache.is_duplicate(owner_id, digest):
                 logger.debug("Post %s already processed for community %s", post.id, community.name)
                 continue
