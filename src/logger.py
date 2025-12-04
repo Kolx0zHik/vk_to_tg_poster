@@ -1,4 +1,5 @@
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -12,6 +13,7 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     logger = logging.getLogger("poster")
     logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    formatter.converter = time.localtime  # логируем в локальном часовом поясе
 
     handler = RotatingFileHandler(
         log_path,
