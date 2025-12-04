@@ -554,7 +554,6 @@ INDEX_HTML = """
         <h3>Сообщества</h3>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn secondary" id="addCommunity">+ Добавить сообщество</button>
-          <button class="btn save" id="saveCommunities">Сохранить группы</button>
         </div>
       </div>
       <div class="communities" id="communities"></div>
@@ -632,6 +631,7 @@ INDEX_HTML = """
     const statusBadges = document.getElementById('statusBadges');
     let communities = [];
     const modal = document.getElementById('communityModal');
+    let saveTimer = null;
 
     function showToast(text, isError = false) {
       const toast = document.getElementById('toast');
@@ -760,6 +760,7 @@ INDEX_HTML = """
       });
       renderCommunities();
       closeModal();
+      scheduleSave();
     }
 
     function attachHandlers() {
@@ -768,11 +769,26 @@ INDEX_HTML = """
         if (removeIdx !== null) {
           communities.splice(parseInt(removeIdx, 10), 1);
           renderCommunities();
+          scheduleSave();
+        }
+      });
+      communitiesEl.addEventListener('change', (e) => {
+        if (e.target.matches('input[data-field]')) {
+          const card = e.target.closest('.community');
+          const idx = [...communitiesEl.children].indexOf(card);
+          if (idx >= 0) {
+            communities[idx].id = card.querySelector('input[data-field="id"]').value.trim();
+            communities[idx].name = card.querySelector('input[data-field="name"]').value.trim();
+            communities[idx].active = card.querySelector('input[data-field="active"]').checked;
+            ['text','photo','video','audio','link'].forEach(type => {
+              communities[idx].content_types[type] = card.querySelector(`input[data-field="${type}"]`).checked;
+            });
+          }
+          scheduleSave();
         }
       });
       document.getElementById('addCommunity').addEventListener('click', openModal);
-      document.getElementById('saveBtn').addEventListener('click', saveConfig);
-      document.getElementById('saveCommunities').addEventListener('click', saveConfig);
+      document.getElementById('saveBtn').addEventListener('click', () => saveConfig(false));
       document.getElementById('cronSimple').addEventListener('change', (e) => {
         const value = e.target.value;
         const customBlock = document.getElementById('cronCustomBlock');
@@ -876,7 +892,12 @@ INDEX_HTML = """
       }
     }
 
-    async function saveConfig() {
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => saveConfig(true), 500);
+    }
+
+    async function saveConfig(silent = false) {
       clearFieldErrors();
       const vkTokenInput = document.getElementById('vkToken');
       const tgTokenInput = document.getElementById('tgToken');
@@ -925,8 +946,10 @@ INDEX_HTML = """
           }
           throw new Error(message);
         }
-        showToast('Конфиг сохранён');
-        loadConfig();
+        if (!silent) {
+          showToast('Конфиг сохранён');
+          loadConfig();
+        }
       } catch (err) {
         showAlert(err.message || 'Ошибка сохранения');
       }
