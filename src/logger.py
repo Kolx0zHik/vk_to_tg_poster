@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -7,6 +8,15 @@ from .config import GeneralSettings
 
 
 def configure_logging(settings: GeneralSettings) -> logging.Logger:
+    # Ensure local timezone (default to Europe/Moscow if not provided)
+    tz = os.environ.get("TZ", "Europe/Moscow")
+    os.environ["TZ"] = tz
+    try:
+        time.tzset()
+    except AttributeError:
+        # tzset is not available on some platforms (e.g., Windows containers)
+        pass
+
     log_path = Path(settings.log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
