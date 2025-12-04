@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import List, Optional
 
 import requests
@@ -44,6 +45,12 @@ class TelegramClient:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
         self.session = requests.Session()
 
+    class RateLimitError(Exception):
+        def __init__(self, retry_after: int | None, payload: dict):
+            super().__init__("Telegram rate limit")
+            self.retry_after = retry_after
+            self.payload = payload
+
     def _post(self, method: str, data: dict, json_mode: bool = False) -> None:
         url = f"{self.base_url}/{method}"
         if json_mode:
@@ -51,17 +58,33 @@ class TelegramClient:
         else:
             resp = self.session.post(url, data=data, timeout=20)
         if not resp.ok:
+            payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 429:
+                retry_after = payload.get("parameters", {}).get("retry_after")
+                raise self.RateLimitError(retry_after=retry_after, payload=payload)
             raise RuntimeError(f"Telegram API error ({method}): {resp.status_code} {resp.text}")
         payload = resp.json()
         if not payload.get("ok"):
+            if payload.get("error_code") == 429:
+                retry_after = payload.get("parameters", {}).get("retry_after")
+                raise self.RateLimitError(retry_after=retry_after, payload=payload)
             raise RuntimeError(f"Telegram API returned error for {method}: {payload}")
+
+    def _post_with_retry(self, method: str, data: dict, json_mode: bool = False) -> None:
+        try:
+            self._post(method, data, json_mode=json_mode)
+        except self.RateLimitError as exc:
+            delay = exc.retry_after or 3
+            logger.warning("Rate limited on %s, retrying after %ss", method, delay)
+            time.sleep(delay)
+            self._post(method, data, json_mode=json_mode)
 
     def send_text(self, text: str, vk_url: Optional[str] = None, use_keyboard: bool = True) -> None:
         logger.debug("Sending text message to Telegram")
         data = {"chat_id": self.channel_id, "text": text, "disable_web_page_preview": False}
         if vk_url and use_keyboard:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post("sendMessage", data)
+        self._post_with_retry("sendMessage", data)
 
     def send_photo(
         self,
@@ -78,7 +101,7 @@ class TelegramClient:
             data["parse_mode"] = parse_mode
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post("sendPhoto", data)
+        self._post_with_retry("sendPhoto", data)
 
     def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending video to Telegram")
@@ -87,7 +110,7 @@ class TelegramClient:
             data["caption"] = caption
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post("sendVideo", data)
+        self._post_with_retry("sendVideo", data)
 
     def send_audio(self, audio_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Sending audio to Telegram")
@@ -96,7 +119,7 @@ class TelegramClient:
             data["caption"] = caption
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post("sendAudio", data)
+        self._post_with_retry("sendAudio", data)
 
     def send_link(self, link_url: str, title: str | None = None, vk_url: Optional[str] = None) -> None:
         text = f"{title or ''}\n{link_url}" if title else link_url
@@ -105,7 +128,7 @@ class TelegramClient:
     def send_media_group(self, media: List[dict]) -> None:
         logger.debug("Sending media group to Telegram (%s items)", len(media))
         data = {"chat_id": self.channel_id, "media": media}
-        self._post("sendMediaGroup", data, json_mode=True)
+        self._post_with_retry("sendMediaGroup", data, json_mode=True)
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
         vk_url = post.vk_link
@@ -131,17 +154,7 @@ class TelegramClient:
         # Множественные фото: отправляем альбом без caption, затем текст отдельным сообщением с кнопкой.
         elif len(photos) > 1:
             media = [{"type": "photo", "media": photo.url} for photo in photos]
-            try:
-                self.send_media_group(media)
-            except RuntimeError as exc:
-                if "429" in str(exc):
-                    logger.warning("Rate limited on media group, retrying once after 3s")
-                    import time
-
-                    time.sleep(3)
-                    self.send_media_group(media)
-                else:
-                    raise
+            self.send_media_group(media)
             # Отдельным сообщением отправляем текст + кнопку на VK.
             if allowed.text and post.text:
                 self.send_text(_escape_html(post.text), vk_url=vk_url)
