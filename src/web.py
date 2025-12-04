@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
 from fastapi import FastAPI, HTTPException
@@ -114,6 +114,11 @@ def _load_ui_config() -> dict:
     return config_to_dict(config)
 
 
+def _cleanup_cache(config_dict: dict) -> None:
+    # временно отключено по запросу: не трогаем кеш при изменении сообществ
+    return
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(content=INDEX_HTML)
@@ -158,7 +163,30 @@ async def save_config(payload: SaveRequest) -> dict:
         )
 
     save_config_dict(merged, CONFIG_PATH)
+    _cleanup_cache(merged)
     return {"ok": True}
+
+@app.get("/api/logs")
+async def get_logs(lines: int = 200) -> dict:
+    try:
+        cfg = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+        log_path = Path(cfg.general.log_file)
+    except Exception:
+        log_path = Path("logs/poster.log")
+
+    if not log_path.exists():
+        return {"lines": [], "path": str(log_path)}
+
+    with log_path.open("r", encoding="utf-8", errors="ignore") as f:
+        content = f.readlines()
+    tail = content[-lines:] if lines > 0 else content
+    return {"lines": tail, "path": str(log_path)}
 
 
 INDEX_HTML = """
@@ -230,8 +258,8 @@ INDEX_HTML = """
     }
     .row {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
     }
     .card {
       background: var(--card);
@@ -252,7 +280,7 @@ INDEX_HTML = """
       color: var(--muted);
       margin-bottom: 6px;
     }
-    input[type="text"], input[type="number"], select {
+    input[type="text"], input[type="number"], input[type="password"], select {
       width: 100%;
       padding: 10px 12px;
       border-radius: 12px;
@@ -320,8 +348,8 @@ INDEX_HTML = """
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px 14px;
     }
     .row-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .error {
@@ -370,12 +398,46 @@ INDEX_HTML = """
       border: none;
       box-shadow: 0 12px 30px rgba(92,160,255,0.3);
     }
+    .btn.secondary {
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid var(--stroke);
+      box-shadow: none;
+      color: var(--text);
+    }
     .btn.danger {
       background: linear-gradient(135deg, rgba(255,127,157,0.2), rgba(255,127,157,0.32));
       border-color: rgba(255,127,157,0.4);
       color: #ffe9f0;
     }
     .communities { display: grid; gap: 12px; }
+    .community {
+      border: 1px solid var(--stroke);
+      border-radius: 16px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      box-shadow: var(--shadow);
+    }
+    .community summary {
+      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      list-style: none;
+      align-items: center;
+      padding: 6px 4px;
+    }
+    .badge-mini {
+      padding: 4px 8px;
+      border-radius: 10px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.05);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .community details > div { margin-top: 12px; }
     .card-header {
       display: flex;
       justify-content: space-between;
@@ -411,6 +473,27 @@ INDEX_HTML = """
     @media (max-width: 720px) {
       .hero { flex-direction: column; align-items: flex-start; }
     }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+    }
+    .modal.show { display: flex; }
+    .modal-card {
+      background: #0d1a2d;
+      border: 1px solid var(--stroke);
+      border-radius: 16px;
+      padding: 18px;
+      width: min(540px, 92vw);
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 12px;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -456,12 +539,12 @@ INDEX_HTML = """
       <div class="card">
         <h3>Токены</h3>
         <label for="vkToken">VK сервисный токен (не обязательно, если в env)</label>
-        <input id="vkToken" type="text" placeholder="vk1.a...." />
+        <input id="vkToken" type="password" placeholder="vk1.a...." />
         <label for="tgChannel">Канал Telegram</label>
         <input id="tgChannel" type="text" placeholder="@channel или ID" />
         <div class="error" id="tgChannelError" style="display:none;"></div>
         <label for="tgToken">Telegram Bot Token (не обязательно, если в env)</label>
-        <input id="tgToken" type="text" placeholder="1234:ABC..." />
+        <input id="tgToken" type="password" placeholder="1234:ABC..." />
         <div class="hint">Токены не отображаются, чтобы не светить секреты. Новое значение заменит сохранённое.</div>
       </div>
     </div>
@@ -469,19 +552,86 @@ INDEX_HTML = """
     <div class="card">
       <div class="card-header">
         <h3>Сообщества</h3>
-        <button class="btn" id="addCommunity">+ Добавить сообщество</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn secondary" id="addCommunity">+ Добавить сообщество</button>
+          <button class="btn save" id="saveCommunities">Сохранить группы</button>
+        </div>
       </div>
       <div class="communities" id="communities"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>Логи</h3>
+        <button class="btn" id="loadLogs">Показать последние строки</button>
+      </div>
+      <pre id="logsBox" style="max-height:320px; overflow:auto; background:rgba(0,0,0,0.35); padding:12px; border-radius:12px; border:1px solid var(--stroke); color:#d5dcef; font-family: monospace; font-size:13px;"></pre>
+      <div class="hint">Загружается по кнопке, чтобы не расходовать ресурсы постоянно.</div>
     </div>
   </div>
 
   <div class="toast" id="toast"></div>
   <div class="alert" id="alert"></div>
 
+  <div class="modal" id="communityModal">
+    <div class="modal-card">
+      <h3>Новое сообщество</h3>
+      <div class="row">
+        <div>
+          <label>ID/ссылка/короткое имя</label>
+          <input type="text" id="modalId" placeholder="club123, https://vk.com/club123, poputiuren" />
+        </div>
+        <div>
+          <label>Имя</label>
+          <input type="text" id="modalName" placeholder="Имя для удобства" />
+        </div>
+        <div style="display:flex; align-items:flex-end;">
+          <label class="toggle" style="margin:0;">
+            <input type="checkbox" id="modalActive" checked>
+            <span class="dot"></span>
+            <span>Активно</span>
+          </label>
+        </div>
+      </div>
+      <div class="grid">
+        <label class="toggle">
+          <input type="checkbox" id="modal-text" checked>
+          <span class="dot"></span>
+          <span>text</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="modal-photo" checked>
+          <span class="dot"></span>
+          <span>photo</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="modal-video" checked>
+          <span class="dot"></span>
+          <span>video</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="modal-audio">
+          <span class="dot"></span>
+          <span>audio</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="modal-link" checked>
+          <span class="dot"></span>
+          <span>link</span>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="modalCancel" type="button">Отмена</button>
+        <button class="btn save" id="modalAdd" type="button">Добавить</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const communitiesEl = document.getElementById('communities');
     const statusBadges = document.getElementById('statusBadges');
     let communities = [];
+    const modal = document.getElementById('communityModal');
 
     function showToast(text, isError = false) {
       const toast = document.getElementById('toast');
@@ -517,35 +667,42 @@ INDEX_HTML = """
         const wrapper = document.createElement('div');
         wrapper.className = 'community';
         wrapper.innerHTML = `
-          <div class="row">
-            <div>
-              <label>ID/ссылка/короткое имя</label>
-              <input type="text" data-field="id" value="${c.id}" placeholder="club123, https://vk.com/club123, poputiuren" />
+          <details>
+            <summary>
+              <span>${c.name || 'Без имени'}</span>
+              <span class="badge-mini">${c.id || 'ID не задан'}</span>
+              ${c.active ? '<span class="badge-mini pill">Активно</span>' : '<span class="badge-mini">Выключено</span>'}
+            </summary>
+            <div class="row" style="margin-top:10px;">
+              <div>
+                <label>ID/ссылка/короткое имя</label>
+                <input type="text" data-field="id" value="${c.id}" placeholder="club123, https://vk.com/club123, poputiuren" />
+              </div>
+              <div>
+                <label>Имя</label>
+                <input type="text" data-field="name" value="${c.name}" />
+              </div>
+              <div style="display:flex; align-items:flex-end;">
+                <label class="toggle" style="margin:0;">
+                  <input type="checkbox" data-field="active" ${c.active ? 'checked' : ''}>
+                  <span class="dot"></span>
+                  <span>Активно</span>
+                </label>
+              </div>
             </div>
-            <div>
-              <label>Имя</label>
-              <input type="text" data-field="name" value="${c.name}" />
+            <div class="grid">
+              ${['text','photo','video','audio','link'].map(type => `
+                <label class="toggle">
+                  <input type="checkbox" data-field="${type}" ${c.content_types[type] ? 'checked' : ''}>
+                  <span class="dot"></span>
+                  <span>${type}</span>
+                </label>
+              `).join('')}
             </div>
-            <div style="display:flex; align-items:flex-end;">
-              <label class="toggle" style="margin:0;">
-                <input type="checkbox" data-field="active" ${c.active ? 'checked' : ''}>
-                <span class="dot"></span>
-                <span>Активно</span>
-              </label>
+            <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+              <button class="btn danger" data-remove="${idx}">Удалить</button>
             </div>
-          </div>
-          <div class="grid">
-            ${['text','photo','video','audio','link'].map(type => `
-              <label class="toggle">
-                <input type="checkbox" data-field="${type}" ${c.content_types[type] ? 'checked' : ''}>
-                <span class="dot"></span>
-                <span>${type}</span>
-              </label>
-            `).join('')}
-          </div>
-          <div style="display:flex; justify-content:flex-end;">
-            <button class="btn danger" data-remove="${idx}">Удалить</button>
-          </div>
+          </details>
         `;
         communitiesEl.appendChild(wrapper);
       });
@@ -567,6 +724,44 @@ INDEX_HTML = """
       });
     }
 
+    function openModal() {
+      document.getElementById('modalId').value = '';
+      document.getElementById('modalName').value = '';
+      document.getElementById('modalActive').checked = true;
+      ['text','photo','video','audio','link'].forEach((type) => {
+        const el = document.getElementById(`modal-${type}`);
+        if (el) el.checked = ['text','photo','video','link'].includes(type);
+      });
+      modal.classList.add('show');
+    }
+
+    function closeModal() {
+      modal.classList.remove('show');
+    }
+
+    function addFromModal() {
+      const idVal = document.getElementById('modalId').value.trim();
+      const nameVal = document.getElementById('modalName').value.trim() || 'new_community';
+      const active = document.getElementById('modalActive').checked;
+      const content = {};
+      ['text','photo','video','audio','link'].forEach((type) => {
+        const el = document.getElementById(`modal-${type}`);
+        content[type] = el ? el.checked : false;
+      });
+      if (!idVal) {
+        showAlert('Укажите ID/ссылку сообщества');
+        return;
+      }
+      communities.push({
+        id: idVal,
+        name: nameVal,
+        active,
+        content_types: content,
+      });
+      renderCommunities();
+      closeModal();
+    }
+
     function attachHandlers() {
       communitiesEl.addEventListener('click', (e) => {
         const removeIdx = e.target.getAttribute('data-remove');
@@ -575,16 +770,9 @@ INDEX_HTML = """
           renderCommunities();
         }
       });
-      document.getElementById('addCommunity').addEventListener('click', () => {
-        communities.push({
-          id: '',
-          name: 'new_community',
-          active: true,
-          content_types: { text: true, photo: true, video: false, audio: false, link: true },
-        });
-        renderCommunities();
-      });
+      document.getElementById('addCommunity').addEventListener('click', openModal);
       document.getElementById('saveBtn').addEventListener('click', saveConfig);
+      document.getElementById('saveCommunities').addEventListener('click', saveConfig);
       document.getElementById('cronSimple').addEventListener('change', (e) => {
         const value = e.target.value;
         const customBlock = document.getElementById('cronCustomBlock');
@@ -596,6 +784,29 @@ INDEX_HTML = """
           customBlock.style.display = 'none';
           cronInput.value = value;
         }
+      });
+
+      const logsBtn = document.getElementById('loadLogs');
+      const logsBox = document.getElementById('logsBox');
+      logsBtn.addEventListener('click', async () => {
+        logsBtn.disabled = true;
+        logsBtn.textContent = 'Загрузка...';
+        try {
+          const res = await fetch('/api/logs?lines=300');
+          const data = await res.json();
+          logsBox.textContent = (data.lines || []).join('');
+        } catch (err) {
+          logsBox.textContent = 'Не удалось загрузить логи';
+        } finally {
+          logsBtn.disabled = false;
+          logsBtn.textContent = 'Показать последние строки';
+        }
+      });
+
+      document.getElementById('modalCancel').addEventListener('click', closeModal);
+      document.getElementById('modalAdd').addEventListener('click', addFromModal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
       });
     }
 
@@ -621,7 +832,17 @@ INDEX_HTML = """
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
         document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
-        document.getElementById('tgChannel').value = data.telegram?.channel_id || '';
+        const vkField = document.getElementById('vkToken');
+        const tgField = document.getElementById('tgToken');
+        const tgChannelField = document.getElementById('tgChannel');
+
+        vkField.value = data.vk?.token_set ? '********' : '';
+        vkField.dataset.masked = data.vk?.token_set ? 'true' : 'false';
+
+        tgField.value = data.telegram?.bot_token_set ? '********' : '';
+        tgField.dataset.masked = data.telegram?.bot_token_set ? 'true' : 'false';
+
+        tgChannelField.value = data.telegram?.channel_id || '';
         communities = data.communities || [];
         renderCommunities();
         renderBadges(data);
@@ -657,6 +878,8 @@ INDEX_HTML = """
 
     async function saveConfig() {
       clearFieldErrors();
+      const vkTokenInput = document.getElementById('vkToken');
+      const tgTokenInput = document.getElementById('tgToken');
       const payload = {
         general: {
           cron: document.getElementById('cron').value || document.getElementById('cronSimple').value,
@@ -667,10 +890,10 @@ INDEX_HTML = """
           log_level: document.getElementById('logDebug').checked ? 'DEBUG' : 'INFO',
           log_rotation: { max_bytes: 10485760, backup_count: 5 },
         },
-        vk: { token: document.getElementById('vkToken').value.trim() },
+        vk: { token: (vkTokenInput.dataset.masked === 'true' && vkTokenInput.value === '********') ? '' : vkTokenInput.value.trim() },
         telegram: {
           channel_id: document.getElementById('tgChannel').value.trim(),
-          bot_token: document.getElementById('tgToken').value.trim(),
+          bot_token: (tgTokenInput.dataset.masked === 'true' && tgTokenInput.value === '********') ? '' : tgTokenInput.value.trim(),
         },
         communities: collectCommunities(),
       };

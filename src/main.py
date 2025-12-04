@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import time
+from datetime import datetime
+
+from croniter import croniter
 
 from .cache import Cache
 from .config import ConfigError, load_config
 from .logger import configure_logging
 from .pipeline import process_communities
-from .scheduler import CronScheduler
 from .tg_client import TelegramClient
 from .vk_client import VKClient
 
@@ -25,8 +28,25 @@ def run_once(config_path: str, logger) -> None:
 
 
 def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
-    scheduler = CronScheduler(cron_expr, lambda: run_job(config_path, logger), logger)
-    scheduler.start()
+    logger.info("Starting scheduler with cron: %s", cron_expr)
+    while True:
+        now = datetime.now()
+        it = croniter(cron_expr, now)
+        next_run = it.get_next(datetime)
+        sleep_for = max(1, int((next_run - datetime.now()).total_seconds()))
+        logger.debug("Next run at %s (in %ss)", next_run, sleep_for)
+        time.sleep(sleep_for)
+        try:
+            # reload config to pick up updated cron/content/token changes
+            cfg = load_config(config_path)
+            process_communities(cfg, VKClient(cfg.vk.token, cfg.general.vk_api_version), TelegramClient(cfg.telegram.bot_token, cfg.telegram.channel_id), Cache(cfg.general.cache_file))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Scheduled run failed: %s", exc)
+        # refresh cron from file for next iteration
+        try:
+            cron_expr = load_config(config_path).general.cron
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to reload cron from config: %s (keeping previous: %s)", exc, cron_expr)
 
 
 def main() -> None:
