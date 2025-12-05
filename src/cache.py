@@ -18,13 +18,13 @@ class Cache:
     def _load(self) -> None:
         if not self.path.exists():
             self._store = {}
-            return
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._store = {k: set(v) for k, v in data.items()}
-        except Exception:
-            # In case of corrupted cache we start fresh.
-            self._store = {}
+        else:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self._store = {k: set(v) for k, v in data.items()}
+            except Exception:
+                # In case of corrupted cache we start fresh.
+                self._store = {}
         # ensure global bucket exists
         if "_global" not in self._store:
             self._store["_global"] = set()
@@ -42,6 +42,8 @@ class Cache:
 
     def remember(self, community_id: int, post_hash: str) -> None:
         key = str(community_id)
+        if "_global" not in self._store:
+            self._store["_global"] = set()
         if key not in self._store:
             self._store[key] = set()
         self._store[key].add(post_hash)
