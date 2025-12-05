@@ -154,12 +154,16 @@ class TelegramClient:
 
         text_used = False
 
-        # Single photo: отправляем фото без длинного caption; текст отдельным сообщением.
+        # Single photo: отправляем фото с caption (если есть текст) и кнопкой.
         if photos and len(photos) == 1:
-            self.send_photo(photos[0].url, caption=None, vk_url=vk_url)
-            if allowed.text and post.text:
-                self.send_text(_escape_html(post.text), vk_url=vk_url, parse_mode="HTML")
-                text_used = True
+            caption = _escape_html(post.text) if (allowed.text and post.text) else None
+            self.send_photo(
+                photos[0].url,
+                caption=caption,
+                vk_url=vk_url,
+                parse_mode="HTML" if caption else None,
+            )
+            text_used = bool(caption)
         # Множественные фото: отправляем альбом без caption, затем текст отдельным сообщением с кнопкой.
         elif len(photos) > 1:
             media = [{"type": "photo", "media": photo.url} for photo in photos]
