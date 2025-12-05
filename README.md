@@ -32,6 +32,7 @@
 - `general.cron` — расписание (формат cron).
 - `general.posts_limit` — сколько последних постов забирать с `wall.get`.
 - `general.cache_file`, `general.log_file`, `general.log_level`, ротация логов.
+- `general.blocked_keywords` — стоп-слова (если содержатся в тексте/заголовках вложений, пост пропускается).
 - `vk.token` — токен сервиса ВК (или `VK_API_TOKEN`).
 - `telegram.bot_token`, `telegram.channel_id` — бот и канал (или `TELEGRAM_BOT_TOKEN`).
 - `communities[]` — список сообществ с флагом `active` и разрешёнными `content_types`.

@@ -23,6 +23,7 @@ class GeneralSettings:
     log_file: str = "logs/poster.log"
     log_level: str = "INFO"
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
+    blocked_keywords: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -83,6 +84,8 @@ def _parse_log_rotation(raw: Dict) -> LogRotationSettings:
 
 def _parse_general(raw: Dict) -> GeneralSettings:
     rotation = _parse_log_rotation(raw.get("log_rotation", {}))
+    blocked = raw.get("blocked_keywords", []) or []
+    blocked_list = [str(k).strip() for k in blocked if str(k).strip()]
     return GeneralSettings(
         cron=raw.get("cron", GeneralSettings.cron),
         vk_api_version=str(raw.get("vk_api_version", GeneralSettings.vk_api_version)),
@@ -91,6 +94,7 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         log_file=raw.get("log_file", GeneralSettings.log_file),
         log_level=raw.get("log_level", GeneralSettings.log_level),
         log_rotation=rotation,
+        blocked_keywords=blocked_list,
     )
 
 
@@ -185,6 +189,7 @@ def config_to_dict(config: Config) -> Dict:
                 "max_bytes": config.general.log_rotation.max_bytes,
                 "backup_count": config.general.log_rotation.backup_count,
             },
+            "blocked_keywords": config.general.blocked_keywords,
         },
         "vk": {"token": config.vk.token},
         "telegram": {"bot_token": config.telegram.bot_token, "channel_id": config.telegram.channel_id},

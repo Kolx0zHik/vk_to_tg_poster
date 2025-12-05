@@ -31,6 +31,20 @@ def _should_publish(post: Post, allowed: ContentTypes) -> bool:
     return False
 
 
+def _contains_blocked(post: Post, blocked_keywords: List[str]) -> bool:
+    if not blocked_keywords:
+        return False
+    text_parts = [post.text or ""]
+    for att in post.attachments:
+        if att.title:
+            text_parts.append(att.title)
+    haystack = " ".join(text_parts).lower()
+    for kw in blocked_keywords:
+        if kw.lower() in haystack and kw.strip():
+            return True
+    return False
+
+
 def _normalize_owner_id(raw_id: str, vk_client: VKClient) -> int | None:
     value = (raw_id or "").strip()
     if not value:
@@ -86,6 +100,9 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
 
         # Process oldest first to keep order.
         for post in reversed(posts):
+            if _contains_blocked(post, config.general.blocked_keywords):
+                logger.info("Post %s skipped due to blocked keywords in %s", post.id, community.name)
+                continue
             if not _should_publish(post, community.content_types):
                 continue
             digest = _dedup_key(post)

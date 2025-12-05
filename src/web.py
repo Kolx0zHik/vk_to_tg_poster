@@ -533,6 +533,8 @@ INDEX_HTML = """
             <span>Debug логирование</span>
           </label>
         </div>
+        <label for="blocked" style="margin-top:12px; display:block;">Стоп-слова (каждое с новой строки)</label>
+        <textarea id="blocked" style="width:100%; min-height:90px; padding:10px 12px; border-radius:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.05); color:var(--text); font-size:14px; resize: vertical;"></textarea>
         <div class="hint">Файлы логов и кеш пути: задаются в config.yaml, остаются без изменений.</div>
       </div>
 
@@ -848,6 +850,7 @@ INDEX_HTML = """
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
         document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
+        document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\n');
         const vkField = document.getElementById('vkToken');
         const tgField = document.getElementById('tgToken');
         const tgChannelField = document.getElementById('tgChannel');
@@ -910,6 +913,10 @@ INDEX_HTML = """
           log_file: 'logs/poster.log',
           log_level: document.getElementById('logDebug').checked ? 'DEBUG' : 'INFO',
           log_rotation: { max_bytes: 10485760, backup_count: 5 },
+          blocked_keywords: document.getElementById('blocked').value
+            .split('\n')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0),
         },
         vk: { token: (vkTokenInput.dataset.masked === 'true' && vkTokenInput.value === '********') ? '' : vkTokenInput.value.trim() },
         telegram: {
