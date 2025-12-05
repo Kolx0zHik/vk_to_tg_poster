@@ -6,6 +6,12 @@ from typing import Dict, Set
 
 
 class Cache:
+    """
+    Deduplication cache:
+    - Keeps a single bucket per current date (YYYY-MM-DD), old buckets are dropped on load.
+    - Keys are owner_id_post_id strings; legacy hashes are discarded.
+    """
+
     def __init__(self, path: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -20,17 +26,19 @@ class Cache:
     def _load(self) -> None:
         if not self.path.exists():
             self._store = {}
-            return
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._store = {k: set(v) for k, v in data.items()}
-        except Exception:
-            # In case of corrupted cache we start fresh.
-            self._store = {}
+        else:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self._store = {k: set(v) for k, v in data.items()}
+            except Exception:
+                # In case of corrupted cache we start fresh.
+                self._store = {}
+
         # Keep only current date bucket
         self._store = {k: v for k, v in self._store.items() if k == self.current_bucket}
         if self.current_bucket not in self._store:
             self._store[self.current_bucket] = set()
+
         # drop legacy hashes; keep only id-based keys
         for k, v in list(self._store.items()):
             self._store[k] = {val for val in v if self._is_id_key(str(val))}
