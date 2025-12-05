@@ -34,6 +34,8 @@ class VKClient:
         for item in items:
             attachments = self._parse_attachments(item.get("attachments", []))
             text = item.get("text", "") or ""
+            source_owner_id = None
+            source_post_id = None
 
             copy_history = item.get("copy_history") or []
             if copy_history:
@@ -41,6 +43,8 @@ class VKClient:
                 orig_text = original.get("text", "") or ""
                 orig_attachments = self._parse_attachments(original.get("attachments", []))
                 attachments.extend(orig_attachments)
+                source_owner_id = original.get("owner_id")
+                source_post_id = original.get("id")
                 if text and orig_text:
                     text = f"{text}\n\n{orig_text}"
                 elif orig_text and not text:
@@ -53,6 +57,8 @@ class VKClient:
                     text=text,
                     attachments=attachments,
                     is_pinned=bool(item.get("is_pinned", 0)),
+                    source_owner_id=source_owner_id,
+                    source_post_id=source_post_id,
                 )
             )
         return posts
