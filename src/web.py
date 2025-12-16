@@ -150,43 +150,53 @@ def _fetch_vk_info(value: str) -> dict | None:
             raise RuntimeError(data["error"])
         return data.get("response") or {}
 
-    try:
-        # Попытка напрямую через groups.getById: group_ids принимает и id, и screen_name
-        group_ids = norm.lstrip("-") if norm.lstrip("-").isdigit() else norm
-        resp = _call("groups.getById", {"group_ids": group_ids, "fields": "photo_200,photo_100,name,screen_name"})
+    def _group_info(group_id: str) -> dict | None:
+        resp = _call("groups.getById", {"group_id": group_id, "fields": "photo_200,photo_100,name"})
         if isinstance(resp, list) and resp:
             item = resp[0]
             gid = item.get("id")
             return {
-                "id": f"-{gid}" if gid else norm,
+                "id": f"-{gid}" if gid else f"-{group_id}",
                 "name": item.get("name") or "",
                 "photo": item.get("photo_200") or item.get("photo_100"),
             }
+        return None
 
-        # Резолвим screen_name
+    def _user_info(user_id: str) -> dict | None:
+        resp = _call("users.get", {"user_ids": user_id, "fields": "photo_200,photo_100,first_name,last_name"})
+        if isinstance(resp, list) and resp:
+            item = resp[0]
+            return {
+                "id": str(item.get("id") or user_id),
+                "name": f"{item.get('first_name','')} {item.get('last_name','')}".strip(),
+                "photo": item.get("photo_200") or item.get("photo_100"),
+            }
+        return None
+
+    try:
+        # 1) resolve screen name
         resolved = _call("utils.resolveScreenName", {"screen_name": norm.lstrip("-")})
         obj_type = resolved.get("type")
         obj_id = resolved.get("object_id")
-        if not obj_type or not obj_id:
-            return None
-        if obj_type in {"group", "page", "event"}:
-            resp = _call("groups.getById", {"group_id": obj_id, "fields": "photo_200,photo_100,name"})
-            if isinstance(resp, list) and resp:
-                item = resp[0]
-                return {
-                    "id": f"-{obj_id}",
-                    "name": item.get("name") or "",
-                    "photo": item.get("photo_200") or item.get("photo_100"),
-                }
-        if obj_type == "user":
-            resp = _call("users.get", {"user_ids": obj_id, "fields": "photo_200,photo_100"})
-            if isinstance(resp, list) and resp:
-                item = resp[0]
-                return {
-                    "id": str(obj_id),
-                    "name": f"{item.get('first_name','')} {item.get('last_name','')}".strip(),
-                    "photo": item.get("photo_200") or item.get("photo_100"),
-                }
+        if obj_type in {"group", "page", "event"} and obj_id:
+            info = _group_info(str(obj_id))
+            if info:
+                return info
+        if obj_type == "user" and obj_id:
+            info = _user_info(str(obj_id))
+            if info:
+                return info
+
+        # 2) если не удалось — пробуем как числовой id группы
+        if norm.lstrip("-").isdigit():
+            info = _group_info(norm.lstrip("-"))
+            if info:
+                return info
+
+        # 3) fallback: groups.getById с переданным значением как screen_name
+        info = _group_info(norm)
+        if info:
+            return info
     except Exception:
         return None
     return None
