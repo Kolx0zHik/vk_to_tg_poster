@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
@@ -94,6 +95,102 @@ def _read_raw_config(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _normalize_owner_id(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    lower = value.lower()
+    for prefix in ("https://vk.com/", "http://vk.com/"):
+        if lower.startswith(prefix):
+            lower = lower.replace(prefix, "")
+    lower = lower.strip("/")
+    for prefix in ("club", "public", "event"):
+        if lower.startswith(prefix) and lower[len(prefix) :].isdigit():
+            return f"-{lower[len(prefix) :]}"
+    if lower.startswith("id") and lower[2:].isdigit():
+        return lower[2:]
+    if lower.lstrip("-").isdigit():
+        return lower
+    return lower
+
+
+def _fetch_vk_info(value: str) -> dict | None:
+    """
+    Возвращает словарь с name и photo для сообщества/пользователя VK.
+    Требует VK_API_TOKEN в окружении или token в config.yaml.
+    """
+    norm = _normalize_owner_id(value)
+    if not norm:
+        return None
+
+    # токен и версия API
+    try:
+        cfg = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+        token = os.getenv("VK_API_TOKEN", cfg.vk.token)
+        api_version = cfg.general.vk_api_version
+    except Exception:
+        token = os.getenv("VK_API_TOKEN", "")
+        api_version = "5.199"
+
+    if not token:
+        return None
+
+    def _call(method: str, params: dict) -> dict:
+        base = {"access_token": token, "v": api_version}
+        resp = requests.get(f"https://api.vk.com/method/{method}", params={**base, **params}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            raise RuntimeError(data["error"])
+        return data.get("response") or {}
+
+    try:
+        # если numeric id -> сразу groups.getById
+        if norm.lstrip("-").isdigit():
+            group_id = norm.lstrip("-")
+            resp = _call("groups.getById", {"group_id": group_id, "fields": "photo_200,photo_100,name"})
+            if isinstance(resp, list) and resp:
+                item = resp[0]
+                return {
+                    "id": norm,
+                    "name": item.get("name") or "",
+                    "photo": item.get("photo_200") or item.get("photo_100"),
+                }
+        # иначе попробуем utils.resolveScreenName
+        resolved = _call("utils.resolveScreenName", {"screen_name": norm.lstrip("-")})
+        obj_type = resolved.get("type")
+        obj_id = resolved.get("object_id")
+        if not obj_type or not obj_id:
+            return None
+        if obj_type in {"group", "page", "event"}:
+            resp = _call("groups.getById", {"group_id": obj_id, "fields": "photo_200,photo_100,name"})
+            if isinstance(resp, list) and resp:
+                item = resp[0]
+                return {
+                    "id": f"-{obj_id}",
+                    "name": item.get("name") or "",
+                    "photo": item.get("photo_200") or item.get("photo_100"),
+                }
+        if obj_type == "user":
+            resp = _call("users.get", {"user_ids": obj_id, "fields": "photo_200,photo_100"})
+            if isinstance(resp, list) and resp:
+                item = resp[0]
+                return {
+                    "id": str(obj_id),
+                    "name": f"{item.get('first_name','')} {item.get('last_name','')}".strip(),
+                    "photo": item.get("photo_200") or item.get("photo_100"),
+                }
+    except Exception:
+        return None
+    return None
+
+
 def _load_ui_config() -> dict:
     try:
         config = load_config(
@@ -166,6 +263,14 @@ async def save_config(payload: SaveRequest) -> dict:
     save_config_dict(merged, CONFIG_PATH)
     _cleanup_cache(merged)
     return {"ok": True}
+
+
+@app.get("/api/community_info")
+async def community_info(value: str) -> dict:
+    info = _fetch_vk_info(value)
+    if not info:
+        return {"id": value, "name": "", "photo": None}
+    return {"id": info.get("id") or value, "name": info.get("name") or "", "photo": info.get("photo")}
 
 @app.get("/api/logs")
 async def get_logs(lines: int = 200) -> dict:
@@ -499,6 +604,24 @@ INDEX_HTML = """
       display: grid;
       gap: 12px;
     }
+    .modal-card.small { width: min(360px, 92vw); }
+    .avatar-large {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      border: 1px solid var(--stroke);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text);
+      box-shadow: var(--shadow);
+      object-fit: cover;
+    }
+    .vk-title { margin: 4px 0 0; font-size: 16px; font-weight: 600; }
+    .vk-sub { margin: 0; color: var(--muted); font-size: 13px; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
   </style>
 </head>
@@ -579,9 +702,29 @@ INDEX_HTML = """
   <div class="toast" id="toast"></div>
   <div class="alert" id="alert"></div>
 
+  <div class="modal" id="lookupModal">
+    <div class="modal-card small">
+      <h3>Новое сообщество</h3>
+      <label for="lookupInput">Ссылка или короткое имя VK</label>
+      <input type="text" id="lookupInput" placeholder="https://vk.com/club123, poputiuren" />
+      <div class="hint">Попробуем получить название и аватар автоматически.</div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="lookupCancel" type="button">Отмена</button>
+        <button class="btn save" id="lookupNext" type="button">Далее</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="communityModal">
     <div class="modal-card">
       <h3>Новое сообщество</h3>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div id="modalAvatar" class="avatar-large">?</div>
+        <div>
+          <p class="vk-title" id="modalVkName"></p>
+          <p class="vk-sub" id="modalVkId"></p>
+        </div>
+      </div>
       <div class="row">
         <div>
           <label>ID/ссылка/короткое имя</label>
@@ -638,6 +781,11 @@ INDEX_HTML = """
     const statusBadges = document.getElementById('statusBadges');
     let communities = [];
     const modal = document.getElementById('communityModal');
+    const lookupModal = document.getElementById('lookupModal');
+    const modalAvatar = document.getElementById('modalAvatar');
+    const modalVkName = document.getElementById('modalVkName');
+    const modalVkId = document.getElementById('modalVkId');
+    let prefillInfo = null;
     let saveTimer = null;
 
     function showToast(text, isError = false) {
@@ -730,14 +878,31 @@ INDEX_HTML = """
       });
     }
 
-    function openModal() {
-      document.getElementById('modalId').value = '';
-      document.getElementById('modalName').value = '';
+    function openModal(prefill = null) {
+      prefillInfo = prefill;
+      const idVal = prefill?.id || '';
+      const nameVal = prefill?.name || '';
+      const avatarUrl = prefill?.photo || '';
+
+      document.getElementById('modalId').value = idVal;
+      document.getElementById('modalName').value = nameVal || idVal || 'new_community';
       document.getElementById('modalActive').checked = true;
       ['text','photo','video','audio','link'].forEach((type) => {
         const el = document.getElementById(`modal-${type}`);
         if (el) el.checked = ['text','photo','video','link'].includes(type);
       });
+      modalVkName.textContent = nameVal || 'Название неизвестно';
+      modalVkId.textContent = idVal ? `ID: ${idVal}` : '';
+      if (avatarUrl) {
+        modalAvatar.innerHTML = '';
+        modalAvatar.style.backgroundImage = `url(${avatarUrl})`;
+        modalAvatar.style.backgroundSize = 'cover';
+        modalAvatar.style.backgroundPosition = 'center';
+      } else {
+        const letter = (nameVal || idVal || '?').trim().charAt(0).toUpperCase() || '?';
+        modalAvatar.style.backgroundImage = 'none';
+        modalAvatar.textContent = letter;
+      }
       modal.classList.add('show');
     }
 
@@ -769,6 +934,34 @@ INDEX_HTML = """
       scheduleSave();
     }
 
+    function openLookup() {
+      document.getElementById('lookupInput').value = '';
+      lookupModal.classList.add('show');
+    }
+
+    async function fetchCommunityInfo(value) {
+      const res = await fetch(`/api/community_info?value=${encodeURIComponent(value)}`);
+      if (!res.ok) throw new Error('fail');
+      return res.json();
+    }
+
+    async function proceedLookup() {
+      const raw = document.getElementById('lookupInput').value.trim();
+      if (!raw) {
+        showAlert('Введите ссылку или имя сообщества');
+        return;
+      }
+      try {
+        const info = await fetchCommunityInfo(raw);
+        lookupModal.classList.remove('show');
+        openModal({ id: info.id || raw, name: info.name || '', photo: info.photo || '' });
+      } catch (err) {
+        showToast('Не удалось получить данные. Заполните вручную.', true);
+        lookupModal.classList.remove('show');
+        openModal({ id: raw, name: '', photo: '' });
+      }
+    }
+
     function attachHandlers() {
       communitiesEl.addEventListener('click', (e) => {
         const removeIdx = e.target.getAttribute('data-remove');
@@ -793,7 +986,7 @@ INDEX_HTML = """
           scheduleSave();
         }
       });
-      document.getElementById('addCommunity').addEventListener('click', openModal);
+      document.getElementById('addCommunity').addEventListener('click', openLookup);
       document.getElementById('saveBtn').addEventListener('click', () => saveConfig(false));
       document.getElementById('cronSimple').addEventListener('change', (e) => {
         const value = e.target.value;
@@ -827,8 +1020,13 @@ INDEX_HTML = """
 
       document.getElementById('modalCancel').addEventListener('click', closeModal);
       document.getElementById('modalAdd').addEventListener('click', addFromModal);
+      document.getElementById('lookupCancel').addEventListener('click', () => lookupModal.classList.remove('show'));
+      document.getElementById('lookupNext').addEventListener('click', proceedLookup);
       modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
+      });
+      lookupModal.addEventListener('click', (e) => {
+        if (e.target === lookupModal) lookupModal.classList.remove('show');
       });
     }
 
