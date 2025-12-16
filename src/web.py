@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import json
 import time
+import re
+from urllib.parse import unquote
 from pathlib import Path
 from typing import List, Optional
 
@@ -112,6 +114,10 @@ def _normalize_owner_id(raw: str) -> str:
     lower = lower.strip("/")
     if "/" in lower:
         lower = lower.split("/", 1)[0]
+    lower = unquote(lower)
+    lower = re.sub(r"[^a-z0-9._-]+", "", lower)
+    if not lower:
+        return ""
     for prefix in ("club", "public", "event"):
         if lower.startswith(prefix) and lower[len(prefix) :].isdigit():
             return f"-{lower[len(prefix) :]}"
@@ -119,7 +125,7 @@ def _normalize_owner_id(raw: str) -> str:
         return lower[2:]
     if lower.lstrip("-").isdigit():
         return lower
-    return lower
+    return lower[:64]
 
 
 def _fetch_vk_info(value: str) -> dict | None:
