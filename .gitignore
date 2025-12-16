@@ -3,6 +3,7 @@ config/config.yaml
 __pycache__/
 .pytest_cache/
 data/cache.json
+data/avatars.json
 logs/
 *.log
 *.pyc
