@@ -31,6 +31,7 @@ class GeneralModel(BaseModel):
     log_file: str = "logs/poster.log"
     log_level: str = Field("INFO", pattern=r"(?i)^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     log_rotation: LogRotationModel = LogRotationModel()
+    blocked_keywords: List[str] = Field(default_factory=list)
 
     @field_validator("cron")
     @classmethod
@@ -850,7 +851,7 @@ INDEX_HTML = """
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
         document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
-        document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\\n');
+        document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\n');
         const vkField = document.getElementById('vkToken');
         const tgField = document.getElementById('tgToken');
         const tgChannelField = document.getElementById('tgChannel');
@@ -914,7 +915,7 @@ INDEX_HTML = """
           log_level: document.getElementById('logDebug').checked ? 'DEBUG' : 'INFO',
           log_rotation: { max_bytes: 10485760, backup_count: 5 },
           blocked_keywords: document.getElementById('blocked').value
-            .split('\\n')
+            .split('\n')
             .map((s) => s.trim())
             .filter((s) => s.length > 0),
         },
