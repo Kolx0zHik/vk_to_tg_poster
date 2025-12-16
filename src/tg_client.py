@@ -75,7 +75,7 @@ class TelegramClient:
             self._post(method, data, json_mode=json_mode)
         except self.RateLimitError as exc:
             delay = exc.retry_after or 3
-            logger.warning("Rate limited on %s, retrying after %ss", method, delay)
+            logger.warning("Ограничение Telegram на %s, повтор через %s с", method, delay)
             time.sleep(delay)
             self._post(method, data, json_mode=json_mode)
 
@@ -87,7 +87,7 @@ class TelegramClient:
         parse_mode: Optional[str] = None,
         disable_preview: bool = False,
     ) -> None:
-        logger.debug("Sending text message to Telegram")
+        logger.debug("Отправка текстового сообщения в Telegram")
         data = {
             "chat_id": self.channel_id,
             "text": text,
@@ -106,7 +106,7 @@ class TelegramClient:
         vk_url: Optional[str] = None,
         parse_mode: Optional[str] = None,
     ) -> None:
-        logger.debug("Sending photo to Telegram")
+        logger.debug("Отправка фото в Telegram")
         data = {"chat_id": self.channel_id, "photo": photo_url}
         if caption:
             data["caption"] = caption
@@ -117,7 +117,7 @@ class TelegramClient:
         self._post_with_retry("sendPhoto", data)
 
     def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
-        logger.debug("Sending video to Telegram")
+        logger.debug("Отправка видео в Telegram")
         data = {"chat_id": self.channel_id, "video": video_url}
         if caption:
             data["caption"] = caption
@@ -126,7 +126,7 @@ class TelegramClient:
         self._post_with_retry("sendVideo", data)
 
     def send_audio(self, audio_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
-        logger.debug("Sending audio to Telegram")
+        logger.debug("Отправка аудио в Telegram")
         data = {"chat_id": self.channel_id, "audio": audio_url}
         if caption:
             data["caption"] = caption
@@ -139,7 +139,7 @@ class TelegramClient:
         self.send_text(text.strip(), vk_url=vk_url)
 
     def send_media_group(self, media: List[dict]) -> None:
-        logger.debug("Sending media group to Telegram (%s items)", len(media))
+        logger.debug("Отправка медиагруппы в Telegram (%s элементов)", len(media))
         data = {"chat_id": self.channel_id, "media": media}
         self._post_with_retry("sendMediaGroup", data, json_mode=True)
 

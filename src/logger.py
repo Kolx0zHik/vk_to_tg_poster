@@ -38,5 +38,5 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     console.setFormatter(formatter)
     logger.addHandler(console)
 
-    logger.debug("Logging configured with file %s", log_path)
+    logger.debug("Логирование настроено, файл: %s", log_path)
     return logger

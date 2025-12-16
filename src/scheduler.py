@@ -13,15 +13,15 @@ class CronScheduler:
     def start(self) -> None:
         trigger = CronTrigger.from_crontab(self.cron_expr)
         self.scheduler.add_job(self._run_job, trigger)
-        self.logger.info("Starting scheduler with cron: %s", self.cron_expr)
+        self.logger.info("Запускаем планировщик с cron: %s", self.cron_expr)
         try:
             self.scheduler.start()
         except (KeyboardInterrupt, SystemExit):
-            self.logger.info("Scheduler stopped.")
+            self.logger.info("Планировщик остановлен.")
 
     def _run_job(self) -> None:
-        self.logger.info("Executing scheduled job")
+        self.logger.info("Выполняем задачу по расписанию")
         try:
             self.job()
         except Exception as exc:  # noqa: BLE001
-            self.logger.exception("Scheduled job failed: %s", exc)
+            self.logger.exception("Ошибка при выполнении задачи: %s", exc)

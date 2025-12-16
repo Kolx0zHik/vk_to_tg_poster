@@ -83,35 +83,36 @@ def _normalize_owner_id(raw_id: str, vk_client: VKClient) -> int | None:
 def process_communities(config: Config, vk_client: VKClient, tg_client: TelegramClient, cache: Cache) -> None:
     for community in config.communities:
         if not community.active:
-            logger.debug("Community %s is disabled, skipping", community.name)
+            logger.debug("Сообщество %s выключено, пропускаем", community.name)
             continue
 
         owner_id = _normalize_owner_id(community.id, vk_client)
         if owner_id is None:
-            logger.warning("Cannot resolve community id '%s', skipping", community.id)
+            logger.warning("Не удалось определить ID сообщества '%s', пропускаем", community.id)
             continue
 
+        logger.debug("Запрашиваем посты из %s (owner_id=%s)", community.name, owner_id)
         try:
             posts = vk_client.fetch_posts(owner_id, config.general.posts_limit)
-            logger.info("Fetched %s posts from %s", len(posts), community.name)
+            logger.info("Получено %s постов из %s", len(posts), community.name)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Failed to fetch posts for %s: %s", community.name, exc)
+            logger.exception("Не удалось получить посты для %s: %s", community.name, exc)
             continue
 
         # Process oldest first to keep order.
         for post in reversed(posts):
             if _contains_blocked(post, config.general.blocked_keywords):
-                logger.info("Post %s skipped due to blocked keywords in %s", post.id, community.name)
+                logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
                 continue
             if not _should_publish(post, community.content_types):
                 continue
             digest = _dedup_key(post)
             if cache.is_duplicate(owner_id, digest):
-                logger.debug("Post %s already processed for community %s", post.id, community.name)
+                logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
                 continue
             try:
                 tg_client.send_post(post, community.content_types)
                 cache.remember(owner_id, digest)
-                logger.info("Published post %s from %s", post.id, community.name)
+                logger.info("Опубликован пост %s из %s", post.id, community.name)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Failed to publish post %s from %s: %s", post.id, community.name, exc)
+                logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)

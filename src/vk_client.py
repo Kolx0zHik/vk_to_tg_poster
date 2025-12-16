@@ -23,7 +23,7 @@ class VKClient:
             "access_token": self.token,
             "v": self.api_version,
         }
-        logger.debug("Requesting VK wall.get for owner_id=%s", owner_id)
+        logger.debug("Запрос VK wall.get для owner_id=%s", owner_id)
         response = self.session.get("https://api.vk.com/method/wall.get", params=params, timeout=15)
         response.raise_for_status()
         payload = response.json()
