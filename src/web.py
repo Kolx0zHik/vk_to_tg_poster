@@ -569,7 +569,7 @@ INDEX_HTML = """
     <div class="card">
       <div class="card-header">
         <h3>Логи</h3>
-        <button class="btn" id="loadLogs">Показать последние строки</button>
+        <button class="btn save" id="loadLogs">Показать последние строки</button>
       </div>
       <pre id="logsBox" style="max-height:320px; overflow:auto; background:rgba(0,0,0,0.35); padding:12px; border-radius:12px; border:1px solid var(--stroke); color:#d5dcef; font-family: monospace; font-size:13px;"></pre>
       <div class="hint">Загружается по кнопке, чтобы не расходовать ресурсы постоянно.</div>
