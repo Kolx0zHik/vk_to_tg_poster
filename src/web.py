@@ -141,22 +141,30 @@ def _fetch_vk_info(value: str) -> dict | None:
     if not token:
         return None
 
-    def _call(method: str, params: dict) -> dict:
+    def _call(method: str, params: dict):
         base = {"access_token": token, "v": api_version}
         resp = requests.get(f"https://api.vk.com/method/{method}", params={**base, **params}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if "error" in data:
             raise RuntimeError(data["error"])
-        return data.get("response") or {}
+        response = data.get("response") or {}
+        # Некоторые методы оборачивают в {"groups": [...]} или {"profiles": [...]}
+        if isinstance(response, dict):
+            if "groups" in response:
+                return response.get("groups") or []
+            if "profiles" in response:
+                return response.get("profiles") or []
+        return response
 
     def _group_info(group_id: str) -> dict | None:
         resp = _call("groups.getById", {"group_id": group_id, "fields": "photo_200,photo_100,name"})
         if isinstance(resp, list) and resp:
             item = resp[0]
             gid = item.get("id")
+            screen = item.get("screen_name") or ""
             return {
-                "id": f"-{gid}" if gid else f"-{group_id}",
+                "id": screen or (f"-{gid}" if gid else f"-{group_id}"),
                 "name": item.get("name") or "",
                 "photo": item.get("photo_200") or item.get("photo_100"),
             }
