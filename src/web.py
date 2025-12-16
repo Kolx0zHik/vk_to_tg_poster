@@ -424,7 +424,7 @@ INDEX_HTML = """
       font-weight: 600;
       letter-spacing: -0.01em;
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: 1fr auto;
       gap: 10px;
       list-style: none;
       align-items: center;
@@ -437,6 +437,11 @@ INDEX_HTML = """
       background: rgba(255,255,255,0.05);
       font-size: 12px;
       color: var(--muted);
+    }
+    .badge-mini.pill {
+      background: rgba(124,231,160,0.12);
+      border-color: rgba(124,231,160,0.4);
+      color: #d5ffe4;
     }
     .community details > div { margin-top: 12px; }
     .card-header {
@@ -498,11 +503,10 @@ INDEX_HTML = """
   </style>
 </head>
 <body>
-  <div class="page">
+    <div class="page">
     <div class="hero">
       <div>
         <h1>VK → Telegram Poster</h1>
-        <p>Управление конфигурацией. Токены можно передавать через .env; они не отображаются здесь.</p>
         <div class="badge-row" id="statusBadges"></div>
       </div>
       <button class="btn save" id="saveBtn">Сохранить</button>
@@ -673,7 +677,6 @@ INDEX_HTML = """
           <details>
             <summary>
               <span>${c.name || 'Без имени'}</span>
-              <span class="badge-mini">${c.id || 'ID не задан'}</span>
               ${c.active ? '<span class="badge-mini pill">Активно</span>' : '<span class="badge-mini">Выключено</span>'}
             </summary>
             <div class="row" style="margin-top:10px;">
