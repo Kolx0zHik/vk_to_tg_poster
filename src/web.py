@@ -39,6 +39,7 @@ class GeneralModel(BaseModel):
     log_level: str = Field("INFO", pattern=r"(?i)^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     log_rotation: LogRotationModel = LogRotationModel()
     blocked_keywords: List[str] = Field(default_factory=list)
+    refresh_avatars: bool = True
 
     @field_validator("cron")
     @classmethod
@@ -1093,6 +1094,7 @@ INDEX_HTML = """
       });
       document.getElementById('addCommunity').addEventListener('click', openLookup);
       document.getElementById('saveBtn').addEventListener('click', () => saveConfig(false));
+      document.getElementById('refreshAvatars').addEventListener('change', () => scheduleSave());
       document.getElementById('cronSimple').addEventListener('change', (e) => {
         const value = e.target.value;
         const customBlock = document.getElementById('cronCustomBlock');
