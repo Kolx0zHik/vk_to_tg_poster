@@ -100,10 +100,14 @@ def _normalize_owner_id(raw: str) -> str:
     if not value:
         return ""
     lower = value.lower()
+    # убираем параметры и якоря
+    lower = lower.split("?", 1)[0].split("#", 1)[0]
     for prefix in ("https://vk.com/", "http://vk.com/"):
         if lower.startswith(prefix):
             lower = lower.replace(prefix, "")
     lower = lower.strip("/")
+    if "/" in lower:
+        lower = lower.split("/", 1)[0]
     for prefix in ("club", "public", "event"):
         if lower.startswith(prefix) and lower[len(prefix) :].isdigit():
             return f"-{lower[len(prefix) :]}"
