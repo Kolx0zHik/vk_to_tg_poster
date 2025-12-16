@@ -554,6 +554,26 @@ INDEX_HTML = """
       align-items: center;
       padding: 6px 4px;
     }
+    .summary-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      border: 1px solid var(--stroke);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--text);
+      box-shadow: var(--shadow);
+    }
+    .avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
     .badge-mini {
       padding: 4px 8px;
       border-radius: 10px;
@@ -841,10 +861,20 @@ INDEX_HTML = """
       communities.forEach((c, idx) => {
         const wrapper = document.createElement('div');
         wrapper.className = 'community';
+        const avatarEl = (() => {
+          if (c.icon) {
+            return `<span class="avatar"><img src="${c.icon}" alt="icon"></span>`;
+          }
+          const letter = (c.name || c.id || '?').trim().charAt(0).toUpperCase() || '?';
+          return `<span class="avatar">${letter}</span>`;
+        })();
         wrapper.innerHTML = `
           <details>
             <summary>
-              <span>${c.name || 'Без имени'}</span>
+              <span class="summary-title">
+                ${avatarEl}
+                <span>${c.name || 'Без имени'}</span>
+              </span>
               ${c.active ? '<span class="badge-mini pill">Активно</span>' : '<span class="badge-mini">Выключено</span>'}
             </summary>
             <div class="row" style="margin-top:10px;">
@@ -947,6 +977,7 @@ INDEX_HTML = """
         id: idVal,
         name: nameVal,
         active,
+        icon: prefillInfo?.photo || '',
         content_types: content,
       });
       renderCommunities();
@@ -1002,6 +1033,11 @@ INDEX_HTML = """
             ['text','photo','video','audio','link'].forEach(type => {
               communities[idx].content_types[type] = card.querySelector(`input[data-field="${type}"]`).checked;
             });
+            // сохраняем иконку, если была
+            const current = communities[idx];
+            if (current && current.icon && !card.querySelector('.avatar img')) {
+              // no-op, icon already stored
+            }
           }
           scheduleSave();
         }
@@ -1085,11 +1121,26 @@ INDEX_HTML = """
 
         tgChannelField.value = data.telegram?.channel_id || '';
         communities = data.communities || [];
+        await enrichIcons();
         renderCommunities();
         renderBadges(data);
       } catch (err) {
         showToast('Не удалось загрузить конфиг', true);
       }
+    }
+
+    async function enrichIcons() {
+      const tasks = (communities || []).map(async (c) => {
+        if (c.icon) return;
+        try {
+          const info = await fetchCommunityInfo(c.id);
+          if (info?.photo) c.icon = info.photo;
+          if (!c.name && info?.name) c.name = info.name;
+        } catch (e) {
+          // ignore
+        }
+      });
+      await Promise.all(tasks);
     }
 
     function clearFieldErrors() {
