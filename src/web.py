@@ -736,13 +736,14 @@ INDEX_HTML = """
         </div>
         <label for="limit" style="margin-top:12px; display:block;">Сколько последних постов забирать</label>
         <input id="limit" type="number" min="1" max="100" />
-      <div class="row-inline" style="margin-top:8px;">
-          <label class="toggle">
-            <input type="checkbox" id="logDebug">
-            <span class="dot"></span>
-            <span>Debug логирование</span>
-          </label>
-        </div>
+        <label for="logRetention" style="margin-top:12px; display:block;">Сколько дней хранить логи</label>
+        <select id="logRetention">
+          <option value="1">1 день</option>
+          <option value="3">3 дня</option>
+          <option value="7">7 дней</option>
+          <option value="14">14 дней</option>
+          <option value="30">30 дней</option>
+        </select>
         <div class="row-inline">
           <label class="toggle">
             <input type="checkbox" id="refreshAvatars">
@@ -1095,6 +1096,7 @@ INDEX_HTML = """
       document.getElementById('addCommunity').addEventListener('click', openLookup);
       document.getElementById('saveBtn').addEventListener('click', () => saveConfig(false));
       document.getElementById('refreshAvatars').addEventListener('change', () => scheduleSave());
+      document.getElementById('logRetention').addEventListener('change', () => scheduleSave());
       document.getElementById('cronSimple').addEventListener('change', (e) => {
         const value = e.target.value;
         const customBlock = document.getElementById('cronCustomBlock');
@@ -1159,7 +1161,7 @@ INDEX_HTML = """
         avatarCache = data.avatar_cache || {};
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
-        document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
+        document.getElementById('logRetention').value = (data.general?.log_retention_days || 7);
         document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\\n');
         document.getElementById('refreshAvatars').checked = data.general?.refresh_avatars !== false;
         const vkField = document.getElementById('vkToken');
@@ -1249,8 +1251,9 @@ INDEX_HTML = """
           vk_api_version: '5.199',
           cache_file: 'data/cache.json',
           log_file: 'logs/poster.log',
-          log_level: document.getElementById('logDebug').checked ? 'DEBUG' : 'INFO',
-          log_rotation: { max_bytes: 10485760, backup_count: 5 },
+          log_level: 'DEBUG',
+          log_rotation: { max_bytes: 10485760, backup_count: 7 },
+          log_retention_days: parseInt(document.getElementById('logRetention').value, 10) || 7,
           blocked_keywords: document.getElementById('blocked').value
             .split('\\n')
             .map((s) => s.trim())
