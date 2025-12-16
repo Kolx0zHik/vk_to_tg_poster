@@ -24,6 +24,7 @@ class GeneralSettings:
     log_level: str = "INFO"
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
     blocked_keywords: List[str] = field(default_factory=list)
+    refresh_avatars: bool = True
 
 
 @dataclass
@@ -95,6 +96,7 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         log_level=raw.get("log_level", GeneralSettings.log_level),
         log_rotation=rotation,
         blocked_keywords=blocked_list,
+        refresh_avatars=bool(raw.get("refresh_avatars", True)),
     )
 
 
@@ -190,6 +192,7 @@ def config_to_dict(config: Config) -> Dict:
                 "backup_count": config.general.log_rotation.backup_count,
             },
             "blocked_keywords": config.general.blocked_keywords,
+            "refresh_avatars": config.general.refresh_avatars,
         },
         "vk": {"token": config.vk.token},
         "telegram": {"bot_token": config.telegram.bot_token, "channel_id": config.telegram.channel_id},

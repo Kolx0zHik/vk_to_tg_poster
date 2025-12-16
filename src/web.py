@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,6 +17,8 @@ from .config import ConfigError, config_to_dict, load_config, parse_config_dict,
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "config/config.yaml"))
 EXAMPLE_CONFIG = BASE_DIR / "config/config.example.yaml"
+AVATAR_CACHE = BASE_DIR / "data/avatars.json"
+AVATAR_TTL_SECONDS = 24 * 3600
 
 app = FastAPI(title="VK → Telegram Poster", version="0.1.0")
 
@@ -138,9 +142,11 @@ def _fetch_vk_info(value: str) -> dict | None:
         )
         token = os.getenv("VK_API_TOKEN", cfg.vk.token)
         api_version = cfg.general.vk_api_version
+        refresh_avatars = cfg.general.refresh_avatars
     except Exception:
         token = os.getenv("VK_API_TOKEN", "")
         api_version = "5.199"
+        refresh_avatars = True
 
     if not token:
         return None
@@ -235,6 +241,22 @@ def _load_ui_config() -> dict:
     return config_to_dict(config)
 
 
+def _read_avatar_cache() -> dict:
+    if not AVATAR_CACHE.exists():
+        return {}
+    try:
+        with AVATAR_CACHE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_avatar_cache(data: dict) -> None:
+    AVATAR_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    with AVATAR_CACHE.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def _cleanup_cache(config_dict: dict) -> None:
     # временно отключено по запросу: не трогаем кеш при изменении сообществ
     return
@@ -252,6 +274,7 @@ async def get_config() -> dict:
     tg_token_set = bool(data.get("telegram", {}).get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN"))
     data["vk"] = {"token_set": vk_token_set}
     data["telegram"] = {"channel_id": data.get("telegram", {}).get("channel_id", ""), "bot_token_set": tg_token_set}
+    data["avatar_cache"] = _read_avatar_cache()
     return data
 
 
@@ -293,6 +316,14 @@ async def community_info(value: str) -> dict:
     info = _fetch_vk_info(value)
     if not info:
         return {"id": value, "name": "", "photo": None}
+    cache = _read_avatar_cache()
+    cache_key = (info.get("id") or value).strip().lower()
+    cache[cache_key] = {
+        "photo": info.get("photo"),
+        "name": info.get("name") or "",
+        "fetched_at": int(time.time()),
+    }
+    _save_avatar_cache(cache)
     return {"id": info.get("id") or value, "name": info.get("name") or "", "photo": info.get("photo")}
 
 @app.get("/api/logs")
@@ -705,6 +736,13 @@ INDEX_HTML = """
             <span>Debug логирование</span>
           </label>
         </div>
+        <div class="row-inline">
+          <label class="toggle">
+            <input type="checkbox" id="refreshAvatars">
+            <span class="dot"></span>
+            <span>Обновлять аватарки сообществ раз в сутки</span>
+          </label>
+        </div>
         <label for="blocked" style="margin-top:12px; display:block;">Стоп-слова (каждое с новой строки)</label>
         <textarea id="blocked" style="width:100%; min-height:90px; padding:10px 12px; border-radius:12px; border:1px solid var(--stroke); background: rgba(255,255,255,0.05); color:var(--text); font-size:14px; resize: vertical;"></textarea>
         <div class="hint">Файлы логов и кеш пути: задаются в config.yaml, остаются без изменений.</div>
@@ -831,6 +869,7 @@ INDEX_HTML = """
     const modalVkId = document.getElementById('modalVkId');
     let prefillInfo = null;
     let saveTimer = null;
+    let avatarCache = {};
 
     function showToast(text, isError = false) {
       const toast = document.getElementById('toast');
@@ -1109,10 +1148,12 @@ INDEX_HTML = """
       try {
         const res = await fetch('/api/config');
         const data = await res.json();
+        avatarCache = data.avatar_cache || {};
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
         document.getElementById('logDebug').checked = (data.general?.log_level || 'INFO').toUpperCase() === 'DEBUG';
         document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\\n');
+        document.getElementById('refreshAvatars').checked = data.general?.refresh_avatars !== false;
         const vkField = document.getElementById('vkToken');
         const tgField = document.getElementById('tgToken');
         const tgChannelField = document.getElementById('tgChannel');
@@ -1125,7 +1166,7 @@ INDEX_HTML = """
 
         tgChannelField.value = data.telegram?.channel_id || '';
         communities = data.communities || [];
-        await enrichIcons();
+        await enrichIcons(data.general?.refresh_avatars !== false);
         renderCommunities();
         renderBadges(data);
       } catch (err) {
@@ -1133,13 +1174,25 @@ INDEX_HTML = """
       }
     }
 
-    async function enrichIcons() {
+    async function enrichIcons(allowRefresh = true) {
       const tasks = (communities || []).map(async (c) => {
-        if (c.icon) return;
+        // Попытка взять из кэша
+        const key = (c.id || '').toLowerCase();
+        const cached = avatarCache[key];
+        const now = Math.floor(Date.now() / 1000);
+        if (cached) {
+          c.icon = cached.photo || c.icon;
+          if (!c.name && cached.name) c.name = cached.name;
+        }
+        const is_stale = !cached || (cached.fetched_at && (now - cached.fetched_at > 24 * 3600));
+        if (!allowRefresh || !is_stale) return;
         try {
           const info = await fetchCommunityInfo(c.id);
           if (info?.photo) c.icon = info.photo;
           if (!c.name && info?.name) c.name = info.name;
+          if (info?.photo || info?.name) {
+            avatarCache[key] = { photo: info.photo, name: info.name, fetched_at: Math.floor(Date.now() / 1000) };
+          }
         } catch (e) {
           // ignore
         }
@@ -1194,6 +1247,7 @@ INDEX_HTML = """
             .split('\\n')
             .map((s) => s.trim())
             .filter((s) => s.length > 0),
+          refresh_avatars: document.getElementById('refreshAvatars').checked,
         },
         vk: { token: (vkTokenInput.dataset.masked === 'true' && vkTokenInput.value === '********') ? '' : vkTokenInput.value.trim() },
         telegram: {
