@@ -151,18 +151,19 @@ def _fetch_vk_info(value: str) -> dict | None:
         return data.get("response") or {}
 
     try:
-        # если numeric id -> сразу groups.getById
-        if norm.lstrip("-").isdigit():
-            group_id = norm.lstrip("-")
-            resp = _call("groups.getById", {"group_id": group_id, "fields": "photo_200,photo_100,name"})
-            if isinstance(resp, list) and resp:
-                item = resp[0]
-                return {
-                    "id": norm,
-                    "name": item.get("name") or "",
-                    "photo": item.get("photo_200") or item.get("photo_100"),
-                }
-        # иначе попробуем utils.resolveScreenName
+        # Попытка напрямую через groups.getById: group_ids принимает и id, и screen_name
+        group_ids = norm.lstrip("-") if norm.lstrip("-").isdigit() else norm
+        resp = _call("groups.getById", {"group_ids": group_ids, "fields": "photo_200,photo_100,name,screen_name"})
+        if isinstance(resp, list) and resp:
+            item = resp[0]
+            gid = item.get("id")
+            return {
+                "id": f"-{gid}" if gid else norm,
+                "name": item.get("name") or "",
+                "photo": item.get("photo_200") or item.get("photo_100"),
+            }
+
+        # Резолвим screen_name
         resolved = _call("utils.resolveScreenName", {"screen_name": norm.lstrip("-")})
         obj_type = resolved.get("type")
         obj_id = resolved.get("object_id")
@@ -620,6 +621,7 @@ INDEX_HTML = """
       box-shadow: var(--shadow);
       object-fit: cover;
     }
+    .avatar-large img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
     .vk-title { margin: 4px 0 0; font-size: 16px; font-weight: 600; }
     .vk-sub { margin: 0; color: var(--muted); font-size: 13px; }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
@@ -893,14 +895,14 @@ INDEX_HTML = """
       });
       modalVkName.textContent = nameVal || 'Название неизвестно';
       modalVkId.textContent = idVal ? `ID: ${idVal}` : '';
+      modalAvatar.innerHTML = '';
       if (avatarUrl) {
-        modalAvatar.innerHTML = '';
-        modalAvatar.style.backgroundImage = `url(${avatarUrl})`;
-        modalAvatar.style.backgroundSize = 'cover';
-        modalAvatar.style.backgroundPosition = 'center';
+        const img = document.createElement('img');
+        img.src = avatarUrl;
+        img.alt = 'avatar';
+        modalAvatar.appendChild(img);
       } else {
         const letter = (nameVal || idVal || '?').trim().charAt(0).toUpperCase() || '?';
-        modalAvatar.style.backgroundImage = 'none';
         modalAvatar.textContent = letter;
       }
       modal.classList.add('show');
