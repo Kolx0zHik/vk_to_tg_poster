@@ -1,5 +1,5 @@
 services:
-  app:
+  vk2tg:
     image: ghcr.io/kolx0zhik/vk_to_tg_poster:latest
     container_name: vk_to_tg_poster
     restart: unless-stopped

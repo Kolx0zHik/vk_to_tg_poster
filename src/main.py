@@ -15,7 +15,10 @@ from .vk_client import VKClient
 
 
 def run_job(config_path: str, logger) -> None:
-    config = load_config(config_path)
+    config = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True)
+    if not config.vk.token or not config.telegram.bot_token or not config.telegram.channel_id:
+        logger.warning("Токены VK/Telegram или канал не заданы, публикация пропущена")
+        return
     cache = Cache(config.general.cache_file)
     vk_client = VKClient(config.vk.token, api_version=config.general.vk_api_version)
     tg_client = TelegramClient(config.telegram.bot_token, config.telegram.channel_id)
@@ -38,15 +41,23 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
         time.sleep(sleep_for)
         try:
             # reload config to pick up updated cron/content/token changes
-            cfg = load_config(config_path)
-            process_communities(cfg, VKClient(cfg.vk.token, cfg.general.vk_api_version), TelegramClient(cfg.telegram.bot_token, cfg.telegram.channel_id), Cache(cfg.general.cache_file))
+            cfg = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True)
+            if not cfg.vk.token or not cfg.telegram.bot_token or not cfg.telegram.channel_id:
+                logger.warning("Токены VK/Telegram или канал не заданы, публикация пропущена")
+            else:
+                process_communities(
+                    cfg,
+                    VKClient(cfg.vk.token, cfg.general.vk_api_version),
+                    TelegramClient(cfg.telegram.bot_token, cfg.telegram.channel_id),
+                    Cache(cfg.general.cache_file),
+                )
+            # refresh cron from file for next iteration
+            try:
+                cron_expr = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True).general.cron
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Не удалось перечитать cron из конфига: %s (оставляем прошлое: %s)", exc, cron_expr)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Сбой планового запуска: %s", exc)
-        # refresh cron from file for next iteration
-        try:
-            cron_expr = load_config(config_path).general.cron
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Не удалось перечитать cron из конфига: %s (оставляем прошлое: %s)", exc, cron_expr)
 
 
 def main() -> None:
@@ -54,7 +65,7 @@ def main() -> None:
     run_mode = os.getenv("RUN_MODE", "scheduled")
 
     try:
-        config = load_config(config_path)
+        config = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True)
     except ConfigError as exc:
         print(f"Ошибка конфигурации: {exc}")
         raise SystemExit(1)
