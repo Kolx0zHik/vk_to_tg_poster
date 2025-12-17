@@ -99,20 +99,32 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             logger.exception("Не удалось получить посты для %s: %s", community.name, exc)
             continue
 
+        last_ts, last_id = cache.get_last_seen(owner_id)
+        new_posts: list[Post] = []
+        for post in reversed(posts):  # старые сначала
+            ts = getattr(post, "date", None) or 0
+            if last_ts:
+                if ts < last_ts:
+                    continue
+                if ts == last_ts and post.id <= (last_id or 0):
+                    continue
+            new_posts.append(post)
+
         # Process oldest first to keep order.
-        for post in reversed(posts):
+        for post in new_posts:
             if _contains_blocked(post, config.general.blocked_keywords):
                 logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
                 continue
             if not _should_publish(post, community.content_types):
                 continue
             digest = _dedup_key(post)
-            if cache.is_duplicate(owner_id, digest):
+            if cache.is_duplicate(digest):
                 logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
                 continue
             try:
                 tg_client.send_post(post, community.content_types)
-                cache.remember(owner_id, digest)
+                cache.remember(owner_id, digest, getattr(post, "date", None))
+                cache.update_last_seen(owner_id, post.id, getattr(post, "date", None))
                 logger.info("Опубликован пост %s из %s", post.id, community.name)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)

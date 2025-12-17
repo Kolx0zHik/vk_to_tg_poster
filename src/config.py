@@ -25,6 +25,7 @@ class GeneralSettings:
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
     blocked_keywords: List[str] = field(default_factory=list)
     refresh_avatars: bool = True
+    log_retention_days: int = 7
 
 
 @dataclass
@@ -97,6 +98,7 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         log_rotation=rotation,
         blocked_keywords=blocked_list,
         refresh_avatars=bool(raw.get("refresh_avatars", True)),
+        log_retention_days=int(raw.get("log_retention_days", 7)),
     )
 
 
@@ -193,6 +195,7 @@ def config_to_dict(config: Config) -> Dict:
             },
             "blocked_keywords": config.general.blocked_keywords,
             "refresh_avatars": config.general.refresh_avatars,
+            "log_retention_days": config.general.log_retention_days,
         },
         "vk": {"token": config.vk.token},
         "telegram": {"bot_token": config.telegram.bot_token, "channel_id": config.telegram.channel_id},

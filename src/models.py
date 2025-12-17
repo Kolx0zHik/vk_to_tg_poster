@@ -15,6 +15,7 @@ class Attachment:
 class Post:
     id: int
     owner_id: int
+    date: int | None = None
     text: str
     is_pinned: bool = False
     attachments: List[Attachment] = field(default_factory=list)

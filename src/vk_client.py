@@ -54,6 +54,7 @@ class VKClient:
                 Post(
                     id=item["id"],
                     owner_id=item["owner_id"],
+                    date=item.get("date"),
                     text=text,
                     attachments=attachments,
                     is_pinned=bool(item.get("is_pinned", 0)),
