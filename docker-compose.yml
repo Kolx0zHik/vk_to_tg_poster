@@ -4,7 +4,7 @@ services:
     container_name: vk_to_tg_poster
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8006:8006"
     environment:
       - TZ=${TZ:-Europe/Moscow}
     volumes:

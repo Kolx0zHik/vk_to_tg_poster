@@ -13,5 +13,5 @@ COPY src ./src
 COPY config ./config
 RUN mkdir -p data logs
 
-EXPOSE 8000
+EXPOSE 8006
 CMD ["./entrypoint.sh"]
