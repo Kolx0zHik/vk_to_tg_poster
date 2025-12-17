@@ -266,33 +266,8 @@ def _save_avatar_cache(data: dict) -> None:
 
 
 def _cleanup_cache(config_dict: dict) -> None:
-    """
-    При удалении сообществ чистим их состояние в кеше (last_seen).
-    dedup не трогаем, он и так протухает по времени.
-    """
-    cache_path = Path(config_dict.get("general", {}).get("cache_file", "data/cache.json"))
-    if not cache_path.exists():
-        return
-    try:
-        cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-
-    communities = config_dict.get("communities", []) or []
-    valid_ids = set()
-    for c in communities:
-        raw_id = str(c.get("id", "")).strip()
-        if raw_id:
-            valid_ids.add(raw_id.lower())
-            norm = _normalize_owner_id(raw_id)
-            if norm:
-                valid_ids.add(str(norm).lower())
-
-    last_seen = cache_data.get("last_seen", {})
-    if last_seen:
-        filtered = {k: v for k, v in last_seen.items() if k.lower() in valid_ids}
-        cache_data["last_seen"] = filtered
-        cache_path.write_text(json.dumps(cache_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Пока не трогаем last_seen при изменении сообществ, чтобы не потерять состояние
+    return
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1154,17 +1129,24 @@ INDEX_HTML = """
       const logsBtn = document.getElementById('loadLogs');
       const logsBox = document.getElementById('logsBox');
       logsBtn.addEventListener('click', async () => {
+        if (logsBox.dataset.visible === 'true') {
+          logsBox.textContent = '';
+          logsBox.dataset.visible = 'false';
+          logsBtn.textContent = 'Показать последние строки';
+          return;
+        }
         logsBtn.disabled = true;
         logsBtn.textContent = 'Загрузка...';
         try {
           const res = await fetch('/api/logs?lines=50');
           const data = await res.json();
           logsBox.textContent = (data.lines || []).join('');
+          logsBox.dataset.visible = 'true';
+          logsBtn.textContent = 'Скрыть логи';
         } catch (err) {
           logsBox.textContent = 'Не удалось загрузить логи';
         } finally {
           logsBtn.disabled = false;
-          logsBtn.textContent = 'Показать последние строки';
         }
       });
 
