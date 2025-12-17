@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+config/config.yaml
+data/*
+logs/*
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.DS_Store
+node_modules

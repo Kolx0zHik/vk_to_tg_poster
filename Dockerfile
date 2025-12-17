@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY entrypoint.sh .
 COPY src ./src
 COPY config ./config
-COPY data ./data
+RUN mkdir -p data logs
 
 EXPOSE 8000
 CMD ["./entrypoint.sh"]
