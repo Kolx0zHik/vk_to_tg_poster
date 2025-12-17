@@ -145,24 +145,38 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         if last_ts is not None and len(filtered) > max_per_poll:
             filtered = filtered[-max_per_poll:]
 
-        # Process oldest first to keep order.
-        for post in filtered:
-            if _contains_blocked(post, config.general.blocked_keywords):
-                logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
-                continue
-            if not _should_publish(post, community.content_types):
-                continue
-            digest = _dedup_key(post)
-            if cache.is_duplicate(digest):
-                logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
-                continue
-            try:
-                tg_client.send_post(post, community.content_types)
-                cache.remember(owner_id, digest)
-                cache.update_last_seen(owner_id, post.id, getattr(post, "date", None))
-                logger.info("Опубликован пост %s из %s", post.id, community.name)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
+        if not filtered:
+            logger.debug("Новых постов нет в %s", community.name)
+        else:
+            # Process oldest first to keep order.
+            for post in filtered:
+                if _contains_blocked(post, config.general.blocked_keywords):
+                    logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
+                    continue
+                if not _should_publish(post, community.content_types):
+                    continue
+                digest = _dedup_key(post)
+                if cache.is_duplicate(digest):
+                    logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
+                    continue
+                try:
+                    tg_client.send_post(post, community.content_types)
+                    cache.remember(owner_id, digest)
+                    cache.update_last_seen(owner_id, post.id, getattr(post, "date", None))
+                    logger.info("Опубликован пост %s из %s", post.id, community.name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
         # фиксируем базовую точку last_seen, даже если ничего не отправили
-        if last_ts is None and newest:
-            cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None))
+        # фиксируем базовую точку last_seen, даже если ничего не отправили,
+        # а также продвигаем last_seen, если видели более свежие посты (например, дубликаты)
+        if newest:
+            new_ts = getattr(newest, "date", None) or 0
+            should_advance = False
+            if last_ts is None:
+                should_advance = True
+            elif new_ts > (last_ts or 0):
+                should_advance = True
+            elif new_ts == (last_ts or 0) and newest.id > (last_id or 0):
+                should_advance = True
+            if should_advance:
+                cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None))

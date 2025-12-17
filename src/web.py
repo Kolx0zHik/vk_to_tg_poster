@@ -279,7 +279,14 @@ def _cleanup_cache(config_dict: dict) -> None:
         return
 
     communities = config_dict.get("communities", []) or []
-    valid_ids = {str(c.get("id", "")).strip().lower() for c in communities if c.get("id")}
+    valid_ids = set()
+    for c in communities:
+        raw_id = str(c.get("id", "")).strip()
+        if raw_id:
+            valid_ids.add(raw_id.lower())
+            norm = _normalize_owner_id(raw_id)
+            if norm:
+                valid_ids.add(str(norm).lower())
 
     last_seen = cache_data.get("last_seen", {})
     if last_seen:
