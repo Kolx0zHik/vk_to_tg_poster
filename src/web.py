@@ -745,7 +745,7 @@ INDEX_HTML = """
           <option value="14">14 дней</option>
           <option value="30">30 дней</option>
         </select>
-        <div class="row-inline">
+        <div class="row-inline" style="margin-top:10px;">
           <label class="toggle">
             <input type="checkbox" id="refreshAvatars">
             <span class="dot"></span>
