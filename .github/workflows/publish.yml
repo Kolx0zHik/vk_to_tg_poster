@@ -19,7 +19,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
@@ -28,5 +28,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/kolx0zhik/vk_to_tg_poster:latest
-            ghcr.io/kolx0zhik/vk_to_tg_poster:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/vk_to_tg_poster:latest
+            ghcr.io/${{ github.repository_owner }}/vk_to_tg_poster:${{ github.sha }}
