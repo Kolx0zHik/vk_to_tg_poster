@@ -33,8 +33,8 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
         now = datetime.now()
         it = croniter(cron_expr, now)
         next_run = it.get_next(datetime)
-        sleep_for = max(1, int((next_run - datetime.now()).total_seconds()))
-        logger.debug("Следующий запуск в %s (через %ss)", next_run, sleep_for)
+        sleep_for = max(0.0, (next_run - datetime.now()).total_seconds())
+        logger.debug("Следующий запуск в %s (через %.1fs)", next_run, sleep_for)
         time.sleep(sleep_for)
         try:
             # reload config to pick up updated cron/content/token changes

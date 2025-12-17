@@ -49,7 +49,7 @@ class Cache:
 
     def remember(self, community_id: int, post_hash: str, post_ts: Optional[int] = None) -> None:
         self._purge()
-        ts = post_ts or int(time.time())
+        ts = int(time.time())
         self._store.setdefault("dedup", []).append({"hash": post_hash, "ts": ts})
         self._persist()
 

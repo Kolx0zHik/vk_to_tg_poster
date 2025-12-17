@@ -158,7 +158,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
                 continue
             try:
                 tg_client.send_post(post, community.content_types)
-                cache.remember(owner_id, digest, getattr(post, "date", None))
+                cache.remember(owner_id, digest)
                 cache.update_last_seen(owner_id, post.id, getattr(post, "date", None))
                 logger.info("Опубликован пост %s из %s", post.id, community.name)
             except Exception as exc:  # noqa: BLE001
