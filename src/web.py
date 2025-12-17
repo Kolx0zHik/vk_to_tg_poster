@@ -1157,7 +1157,7 @@ INDEX_HTML = """
         logsBtn.disabled = true;
         logsBtn.textContent = 'Загрузка...';
         try {
-          const res = await fetch('/api/logs?lines=300');
+          const res = await fetch('/api/logs?lines=50');
           const data = await res.json();
           logsBox.textContent = (data.lines || []).join('');
         } catch (err) {
