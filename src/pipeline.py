@@ -95,10 +95,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         try:
             max_per_poll = max(1, int(config.general.posts_limit))
             last_ts, last_id = cache.get_last_seen(owner_id)
-            initial_mode = last_ts is None
-            target_total = community.initial_load if initial_mode else max_per_poll
-            # всегда вытаскиваем хотя бы одну страницу, чтобы зафиксировать last_seen
-            need_total = max(target_total, max_per_poll if initial_mode else max_per_poll)
+            need_total = max_per_poll
 
             fetched: list[Post] = []
             offset = 0
@@ -139,10 +136,8 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
                 if ts == last_ts and post.id <= (last_id or 0):
                     continue
             filtered.append(post)
-        if last_ts is None and community.initial_load:
-            filtered = filtered[-community.initial_load :] if community.initial_load > 0 else []
         # ограничиваем максимум за опрос
-        if last_ts is not None and len(filtered) > max_per_poll:
+        if len(filtered) > max_per_poll:
             filtered = filtered[-max_per_poll:]
 
         if not filtered:

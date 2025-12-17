@@ -71,7 +71,6 @@ class CommunityModel(BaseModel):
     name: str
     active: bool = True
     content_types: ContentTypesModel = ContentTypesModel()
-    initial_load: int = 0
 
     @field_validator("name")
     @classmethod
@@ -860,14 +859,6 @@ INDEX_HTML = """
           <span>link</span>
         </label>
       </div>
-      <label for="modalInitial" style="margin-top:8px;">Сколько последних постов отправить при добавлении</label>
-      <select id="modalInitial">
-        <option value="0">Не отправлять</option>
-        <option value="3">3</option>
-        <option value="5">5</option>
-        <option value="10">10</option>
-        <option value="20">20</option>
-      </select>
       <div class="modal-actions">
         <button class="btn secondary" id="modalCancel" type="button">Отмена</button>
         <button class="btn save" id="modalAdd" type="button">Добавить</button>
@@ -946,10 +937,6 @@ INDEX_HTML = """
                 <label>Имя</label>
                 <input type="text" data-field="name" value="${c.name}" />
               </div>
-              <div>
-                <label>Начальная загрузка</label>
-                <input type="number" min="0" max="50" data-field="initial_load" value="${c.initial_load || 0}" />
-              </div>
               <div style="display:flex; align-items:flex-end;">
                 <label class="toggle" style="margin:0;">
                   <input type="checkbox" data-field="active" ${c.active ? 'checked' : ''}>
@@ -982,7 +969,6 @@ INDEX_HTML = """
         const obj = {
           id: card.querySelector('input[data-field="id"]').value.trim(),
           name: card.querySelector('input[data-field="name"]').value,
-          initial_load: parseInt(card.querySelector('input[data-field="initial_load"]').value, 10) || 0,
           active: card.querySelector('input[data-field="active"]').checked,
           content_types: {}
         };
@@ -1002,7 +988,6 @@ INDEX_HTML = """
       document.getElementById('modalId').value = idVal;
       document.getElementById('modalName').value = nameVal || idVal || 'new_community';
       document.getElementById('modalActive').checked = true;
-      document.getElementById('modalInitial').value = '5';
       ['text','photo','video','audio','link'].forEach((type) => {
         const el = document.getElementById(`modal-${type}`);
         if (el) el.checked = ['text','photo','video','link'].includes(type);
@@ -1044,7 +1029,6 @@ INDEX_HTML = """
         name: nameVal,
         active,
         icon: prefillInfo?.photo || '',
-        initial_load: parseInt(document.getElementById('modalInitial').value, 10) || 0,
         content_types: content,
       });
       renderCommunities();
