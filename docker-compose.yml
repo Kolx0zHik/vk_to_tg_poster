@@ -1,12 +1,13 @@
 services:
   app:
     image: ghcr.io/kolx0zhik/vk_to_tg_poster:latest
-    pull_policy: always
-    env_file: .env
+    container_name: vk_to_tg_poster
+    restart: unless-stopped
     ports:
       - "8000:8000"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs
       - ./data:/app/data
-    restart: unless-stopped
