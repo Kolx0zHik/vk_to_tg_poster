@@ -3,7 +3,7 @@ set -e
 
 CONFIG_PATH="${CONFIG_PATH:-config/config.yaml}"
 RUN_MODE="${RUN_MODE:-scheduled}"
-PORT="${PORT:-8006}"
+PORT="${PORT:-8222}"
 
 # Ensure directories exist
 mkdir -p "$(dirname "$CONFIG_PATH")" data logs
