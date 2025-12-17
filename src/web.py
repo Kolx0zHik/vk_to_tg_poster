@@ -71,6 +71,7 @@ class CommunityModel(BaseModel):
     name: str
     active: bool = True
     content_types: ContentTypesModel = ContentTypesModel()
+    initial_load: int = 0
 
     @field_validator("name")
     @classmethod
@@ -265,8 +266,26 @@ def _save_avatar_cache(data: dict) -> None:
 
 
 def _cleanup_cache(config_dict: dict) -> None:
-    # временно отключено по запросу: не трогаем кеш при изменении сообществ
-    return
+    """
+    При удалении сообществ чистим их состояние в кеше (last_seen).
+    dedup не трогаем, он и так протухает по времени.
+    """
+    cache_path = Path(config_dict.get("general", {}).get("cache_file", "data/cache.json"))
+    if not cache_path.exists():
+        return
+    try:
+        cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    communities = config_dict.get("communities", []) or []
+    valid_ids = {str(c.get("id", "")).strip().lower() for c in communities if c.get("id")}
+
+    last_seen = cache_data.get("last_seen", {})
+    if last_seen:
+        filtered = {k: v for k, v in last_seen.items() if k.lower() in valid_ids}
+        cache_data["last_seen"] = filtered
+        cache_path.write_text(json.dumps(cache_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -734,7 +753,7 @@ INDEX_HTML = """
           <input id="cron" type="text" placeholder="*/10 * * * *" />
           <div class="error" id="cronError" style="display:none;"></div>
         </div>
-        <label for="limit" style="margin-top:12px; display:block;">Сколько последних постов забирать</label>
+        <label for="limit" style="margin-top:12px; display:block;">Максимум постов за один опрос</label>
         <input id="limit" type="number" min="1" max="100" />
         <label for="logRetention" style="margin-top:12px; display:block;">Сколько дней хранить логи</label>
         <select id="logRetention">
@@ -859,6 +878,14 @@ INDEX_HTML = """
           <span>link</span>
         </label>
       </div>
+      <label for="modalInitial" style="margin-top:8px;">Сколько последних постов отправить при добавлении</label>
+      <select id="modalInitial">
+        <option value="0">Не отправлять</option>
+        <option value="3">3</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+        <option value="20">20</option>
+      </select>
       <div class="modal-actions">
         <button class="btn secondary" id="modalCancel" type="button">Отмена</button>
         <button class="btn save" id="modalAdd" type="button">Добавить</button>
@@ -937,6 +964,10 @@ INDEX_HTML = """
                 <label>Имя</label>
                 <input type="text" data-field="name" value="${c.name}" />
               </div>
+              <div>
+                <label>Начальная загрузка</label>
+                <input type="number" min="0" max="50" data-field="initial_load" value="${c.initial_load || 0}" />
+              </div>
               <div style="display:flex; align-items:flex-end;">
                 <label class="toggle" style="margin:0;">
                   <input type="checkbox" data-field="active" ${c.active ? 'checked' : ''}>
@@ -969,6 +1000,7 @@ INDEX_HTML = """
         const obj = {
           id: card.querySelector('input[data-field="id"]').value.trim(),
           name: card.querySelector('input[data-field="name"]').value,
+          initial_load: parseInt(card.querySelector('input[data-field="initial_load"]').value, 10) || 0,
           active: card.querySelector('input[data-field="active"]').checked,
           content_types: {}
         };
@@ -988,6 +1020,7 @@ INDEX_HTML = """
       document.getElementById('modalId').value = idVal;
       document.getElementById('modalName').value = nameVal || idVal || 'new_community';
       document.getElementById('modalActive').checked = true;
+      document.getElementById('modalInitial').value = '5';
       ['text','photo','video','audio','link'].forEach((type) => {
         const el = document.getElementById(`modal-${type}`);
         if (el) el.checked = ['text','photo','video','link'].includes(type);
@@ -1029,6 +1062,7 @@ INDEX_HTML = """
         name: nameVal,
         active,
         icon: prefillInfo?.photo || '',
+        initial_load: parseInt(document.getElementById('modalInitial').value, 10) || 0,
         content_types: content,
       });
       renderCommunities();

@@ -16,10 +16,11 @@ class VKClient:
         self.api_version = api_version
         self.session = requests.Session()
 
-    def fetch_posts(self, owner_id: int, count: int = 10) -> List[Post]:
+    def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> List[Post]:
         params = {
             "owner_id": owner_id,
             "count": count,
+            "offset": offset,
             "access_token": self.token,
             "v": self.api_version,
         }

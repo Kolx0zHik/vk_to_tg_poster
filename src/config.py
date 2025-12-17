@@ -54,6 +54,7 @@ class Community:
     name: str
     active: bool = True
     content_types: ContentTypes = field(default_factory=ContentTypes)
+    initial_load: int = 0
 
 
 @dataclass
@@ -144,6 +145,7 @@ def _parse_communities(raw_list: Optional[List[Dict]]) -> List[Community]:
                 name=str(raw.get("name", "")),
                 active=bool(raw.get("active", True)),
                 content_types=content_types,
+                initial_load=int(raw.get("initial_load", 0)),
             )
         )
     return communities
@@ -204,6 +206,7 @@ def config_to_dict(config: Config) -> Dict:
                 "id": community.id,
                 "name": community.name,
                 "active": community.active,
+                "initial_load": community.initial_load,
                 "content_types": {
                     "text": community.content_types.text,
                     "photo": community.content_types.photo,

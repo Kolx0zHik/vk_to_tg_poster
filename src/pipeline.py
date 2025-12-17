@@ -93,25 +93,60 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
 
         logger.debug("Запрашиваем посты из %s (owner_id=%s)", community.name, owner_id)
         try:
-            posts = vk_client.fetch_posts(owner_id, config.general.posts_limit)
-            logger.info("Получено %s постов из %s", len(posts), community.name)
+            max_per_poll = max(1, int(config.general.posts_limit))
+            last_ts, last_id = cache.get_last_seen(owner_id)
+            initial_mode = last_ts is None
+            target_total = community.initial_load if initial_mode else max_per_poll
+            # всегда вытаскиваем хотя бы одну страницу, чтобы зафиксировать last_seen
+            need_total = max(target_total, max_per_poll if initial_mode else max_per_poll)
+
+            fetched: list[Post] = []
+            offset = 0
+            page_size = min(10, max_per_poll) if max_per_poll > 0 else 10
+            while len(fetched) < need_total:
+                batch = vk_client.fetch_posts(owner_id, count=page_size, offset=offset)
+                if not batch:
+                    break
+                fetched.extend(batch)
+                offset += len(batch)
+                # если встретили last_seen — выходим
+                if last_ts or last_id:
+                    if any(
+                        (p.date or 0) < (last_ts or 0)
+                        or ((p.date or 0) == (last_ts or 0) and p.id <= (last_id or 0))
+                        for p in batch
+                    ):
+                        break
+                if len(batch) < page_size:
+                    break
+
+            if not fetched:
+                logger.info("Постов не найдено в %s", community.name)
+                continue
+            logger.info("Получено %s постов из %s", len(fetched), community.name)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Не удалось получить посты для %s: %s", community.name, exc)
             continue
 
         last_ts, last_id = cache.get_last_seen(owner_id)
-        new_posts: list[Post] = []
-        for post in reversed(posts):  # старые сначала
+        newest = max(fetched, key=lambda p: ((p.date or 0), p.id))
+        filtered: list[Post] = []
+        for post in reversed(fetched):  # старые сначала
             ts = getattr(post, "date", None) or 0
             if last_ts:
                 if ts < last_ts:
                     continue
                 if ts == last_ts and post.id <= (last_id or 0):
                     continue
-            new_posts.append(post)
+            filtered.append(post)
+        if last_ts is None and community.initial_load:
+            filtered = filtered[-community.initial_load :] if community.initial_load > 0 else []
+        # ограничиваем максимум за опрос
+        if last_ts is not None and len(filtered) > max_per_poll:
+            filtered = filtered[-max_per_poll:]
 
         # Process oldest first to keep order.
-        for post in new_posts:
+        for post in filtered:
             if _contains_blocked(post, config.general.blocked_keywords):
                 logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
                 continue
@@ -128,3 +163,6 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
                 logger.info("Опубликован пост %s из %s", post.id, community.name)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
+        # фиксируем базовую точку last_seen, даже если ничего не отправили
+        if last_ts is None and newest:
+            cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None))
