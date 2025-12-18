@@ -10,6 +10,9 @@
 2. Задайте переменные окружения (можно через `.env`):
    ```env
    VK_API_TOKEN=your_vk_service_token
+
+vkhost.github.io - тут получаем access token
+
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token
    ```
    При желании токены можно прописать в `config/config.yaml`.
