@@ -10,7 +10,7 @@ general:
     backup_count: 7
   blocked_keywords: []
   refresh_avatars: true
-  log_retention_days: 7
+  log_retention_days: 2
 vk:
   token: ""
 telegram:

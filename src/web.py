@@ -11,6 +11,7 @@ from typing import List, Optional
 import yaml
 import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +24,7 @@ AVATAR_CACHE = BASE_DIR / "data/avatars.json"
 AVATAR_TTL_SECONDS = 24 * 3600
 
 app = FastAPI(title="VK → Telegram Poster", version="0.1.0")
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
 class LogRotationModel(BaseModel):
@@ -269,6 +271,24 @@ def _cleanup_cache(config_dict: dict) -> None:
     return
 
 
+def _tail_lines(path: Path, lines: int) -> list[str]:
+    if lines <= 0:
+        return []
+    block_size = 8192
+    buffer = b""
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        while pos > 0 and buffer.count(b"\n") <= lines:
+            read_size = block_size if pos >= block_size else pos
+            pos -= read_size
+            f.seek(pos)
+            buffer = f.read(read_size) + buffer
+    text = buffer.decode("utf-8", errors="ignore")
+    parts = text.splitlines(keepends=True)
+    return parts[-lines:] if len(parts) > lines else parts
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(content=INDEX_HTML)
@@ -350,9 +370,7 @@ async def get_logs(lines: int = 200) -> dict:
     if not log_path.exists():
         return {"lines": [], "path": str(log_path)}
 
-    with log_path.open("r", encoding="utf-8", errors="ignore") as f:
-        content = f.readlines()
-    tail = content[-lines:] if lines > 0 else content
+    tail = _tail_lines(log_path, lines)
     return {"lines": tail, "path": str(log_path)}
 
 
@@ -363,6 +381,8 @@ INDEX_HTML = """
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VK → Telegram Poster · Настройки</title>
+  <link rel="icon" type="image/png" href="/static/logo.png" />
+  <link rel="apple-touch-icon" href="/static/logo.png" />
   <link rel="preconnect" href="https://fonts.gstatic.com" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -410,6 +430,19 @@ INDEX_HTML = """
       letter-spacing: -0.02em;
     }
     .hero p { margin: 0; color: var(--muted); }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand img {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.08);
+      box-shadow: var(--shadow);
+    }
     .badge-row { display: flex; gap: 10px; flex-wrap: wrap; }
     .badge {
       padding: 6px 10px;
@@ -710,9 +743,12 @@ INDEX_HTML = """
 <body>
     <div class="page">
     <div class="hero">
-      <div>
-        <h1>VK → Telegram Poster</h1>
-        <div class="badge-row" id="statusBadges"></div>
+      <div class="brand">
+        <img src="/static/logo.png" alt="VK → Telegram Poster logo">
+        <div>
+          <h1>VK → Telegram Poster</h1>
+          <div class="badge-row" id="statusBadges"></div>
+        </div>
       </div>
       <button class="btn save" id="saveBtn">Сохранить</button>
     </div>
@@ -739,6 +775,7 @@ INDEX_HTML = """
         <label for="logRetention" style="margin-top:12px; display:block;">Сколько дней хранить логи</label>
         <select id="logRetention">
           <option value="1">1 день</option>
+          <option value="2">2 дня</option>
           <option value="3">3 дня</option>
           <option value="7">7 дней</option>
           <option value="14">14 дней</option>

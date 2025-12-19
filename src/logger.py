@@ -20,6 +20,8 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     log_path = Path(settings.log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    _cleanup_old_logs(log_path, settings.log_retention_days)
+
     logger = logging.getLogger("poster")
     logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -40,3 +42,25 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
 
     logger.debug("Логирование настроено, файл: %s", log_path)
     return logger
+
+
+def _cleanup_old_logs(log_path: Path, retention_days: int) -> None:
+    if retention_days <= 0:
+        return
+    cutoff = time.time() - (retention_days * 24 * 3600)
+    log_dir = log_path.parent
+    prefix = log_path.name
+    for entry in log_dir.iterdir():
+        if not entry.is_file():
+            continue
+        if not entry.name.startswith(prefix):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < cutoff:
+            if entry == log_path:
+                entry.write_text("", encoding="utf-8")
+            else:
+                entry.unlink(missing_ok=True)

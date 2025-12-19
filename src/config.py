@@ -25,7 +25,7 @@ class GeneralSettings:
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
     blocked_keywords: List[str] = field(default_factory=list)
     refresh_avatars: bool = True
-    log_retention_days: int = 7
+    log_retention_days: int = 2
 
 
 @dataclass
@@ -98,7 +98,7 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         log_rotation=rotation,
         blocked_keywords=blocked_list,
         refresh_avatars=bool(raw.get("refresh_avatars", True)),
-        log_retention_days=int(raw.get("log_retention_days", 7)),
+        log_retention_days=int(raw.get("log_retention_days", 2)),
     )
 
 
