@@ -387,15 +387,15 @@ INDEX_HTML = """
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: radial-gradient(120% 120% at 20% 20%, #1f4aa8 0%, #0c1a33 35%, #070c16 70%);
-      --card: rgba(255,255,255,0.04);
-      --stroke: rgba(255,255,255,0.08);
-      --accent: #7ce7a0;
-      --accent-2: #5da0ff;
-      --danger: #ff7f9d;
-      --text: #f4f6fb;
-      --muted: #a6b1c2;
-      --shadow: 0 20px 40px rgba(0,0,0,0.45);
+      --bg: radial-gradient(120% 120% at 20% 10%, #f6fbff 0%, #eef3fb 40%, #e6eef8 75%, #e1eaf6 100%);
+      --card: rgba(255,255,255,0.75);
+      --stroke: rgba(22, 43, 76, 0.12);
+      --accent: #34c38f;
+      --accent-2: #3a86ff;
+      --danger: #ff6b6b;
+      --text: #0f1c2e;
+      --muted: #4e647f;
+      --shadow: 0 18px 36px rgba(24, 44, 78, 0.12);
     }
     * { box-sizing: border-box; }
     body {
@@ -420,7 +420,7 @@ INDEX_HTML = """
       gap: 12px;
       padding: 20px;
       border: 1px solid var(--stroke);
-      background: linear-gradient(135deg, rgba(92,160,255,0.12), rgba(124,231,160,0.08));
+      background: linear-gradient(135deg, rgba(58,134,255,0.14), rgba(52,195,143,0.12));
       border-radius: 18px;
       box-shadow: var(--shadow);
     }
@@ -449,17 +449,19 @@ INDEX_HTML = """
       border-radius: 999px;
       font-size: 13px;
       border: 1px solid var(--stroke);
-      background: rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.6);
     }
     .pill {
-      background: rgba(124,231,160,0.08);
-      border-color: rgba(124,231,160,0.35);
-      color: #d5ffe4;
+      background: rgba(52,195,143,0.16);
+      border-color: rgba(52,195,143,0.35);
+      color: #0b3a2b;
     }
     .row {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 14px;
+      position: relative;
+      z-index: 2;
     }
     .card {
       background: var(--card);
@@ -467,8 +469,12 @@ INDEX_HTML = """
       border-radius: 16px;
       padding: 16px;
       box-shadow: var(--shadow);
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(10px);
+      overflow: visible;
+      position: relative;
+      z-index: 1;
     }
+    .card.raise { z-index: 10; }
     .card h3 {
       margin: 0 0 12px;
       font-size: 16px;
@@ -485,7 +491,7 @@ INDEX_HTML = """
       padding: 10px 12px;
       border-radius: 12px;
       border: 1px solid var(--stroke);
-      background: rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.8);
       color: var(--text);
       font-size: 14px;
       outline: none;
@@ -503,11 +509,102 @@ INDEX_HTML = """
     }
     select {
       appearance: none;
-      background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      background:
+        linear-gradient(45deg, transparent 50%, rgba(78,100,127,0.9) 50%),
+        linear-gradient(135deg, rgba(78,100,127,0.9) 50%, transparent 50%),
+        linear-gradient(135deg, rgba(255,255,255,0.95), rgba(236,242,251,0.95));
+      background-position:
+        right 16px center,
+        right 10px center,
+        0 0;
+      background-size: 6px 6px, 6px 6px, 100% 100%;
+      background-repeat: no-repeat;
+      padding-right: 36px;
       color: var(--text);
       position: relative;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    }
+    select:hover {
+      border-color: rgba(58,134,255,0.4);
+    }
+    select:focus {
+      box-shadow: 0 0 0 3px rgba(58,134,255,0.15);
     }
     select option { color: #0a1221; background: #f4f6fb; }
+    .custom-select {
+      position: relative;
+      width: 100%;
+    }
+    .custom-select.open { z-index: 5; }
+    .custom-select select {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      height: 0;
+      width: 0;
+    }
+    .select-display {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--stroke);
+      background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(236,242,251,0.95));
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+    }
+    .select-display::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      margin-left: 10px;
+      border-right: 2px solid rgba(78,100,127,0.9);
+      border-bottom: 2px solid rgba(78,100,127,0.9);
+      transform: rotate(45deg);
+    }
+    .select-display:hover {
+      border-color: rgba(58,134,255,0.4);
+    }
+    .custom-select.open .select-display {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 3px rgba(58,134,255,0.12);
+      transform: translateY(-1px);
+    }
+    .select-options {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      border-radius: 14px;
+      border: 1px solid var(--stroke);
+      background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(236,242,251,0.95));
+      box-shadow: var(--shadow);
+      padding: 6px;
+      display: none;
+      z-index: 20;
+      font-size: 14px;
+    }
+    .custom-select.open .select-options { display: grid; }
+    .select-option {
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      color: var(--text);
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .select-option:hover {
+      background: rgba(58,134,255,0.1);
+    }
+    .select-option.selected {
+      background: rgba(52,195,143,0.16);
+      color: #0b3a2b;
+      font-weight: 600;
+    }
     .toggle {
       display: inline-flex;
       align-items: center;
@@ -515,7 +612,7 @@ INDEX_HTML = """
       font-size: 13px;
       padding: 6px 10px;
       border-radius: 12px;
-      background: rgba(255,255,255,0.04);
+      background: rgba(255,255,255,0.7);
       border: 1px solid var(--stroke);
       cursor: pointer;
       user-select: none;
@@ -525,7 +622,7 @@ INDEX_HTML = """
       width: 34px; height: 18px;
       border-radius: 999px;
       border: 1px solid var(--stroke);
-      background: rgba(255,255,255,0.1);
+      background: rgba(15,28,46,0.08);
       position: relative;
       transition: background 0.2s ease, border-color 0.2s ease;
     }
@@ -535,12 +632,12 @@ INDEX_HTML = """
       top: 2px; left: 2px;
       width: 12px; height: 12px;
       border-radius: 50%;
-      background: var(--muted);
+      background: #8aa1bc;
       transition: transform 0.2s ease, background 0.2s ease;
     }
     .toggle input:checked + .dot {
-      background: rgba(124,231,160,0.15);
-      border-color: rgba(124,231,160,0.5);
+      background: rgba(52,195,143,0.2);
+      border-color: rgba(52,195,143,0.6);
     }
     .toggle input:checked + .dot::after {
       transform: translateX(16px);
@@ -553,13 +650,13 @@ INDEX_HTML = """
     }
     .row-inline { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .error {
-      color: #ffb3c4;
+      color: #b52a3b;
       font-size: 13px;
       margin-top: 4px;
     }
     .invalid {
-      border-color: rgba(255,127,157,0.7) !important;
-      box-shadow: 0 0 0 1px rgba(255,127,157,0.25);
+      border-color: rgba(255,107,107,0.7) !important;
+      box-shadow: 0 0 0 1px rgba(255,107,107,0.25);
     }
     .alert {
       position: fixed;
@@ -568,9 +665,9 @@ INDEX_HTML = """
       transform: translateX(-50%);
       padding: 12px 16px;
       border-radius: 12px;
-      background: rgba(0,0,0,0.7);
-      color: #ffe9f0;
-      border: 1px solid rgba(255,127,157,0.4);
+      background: rgba(255,255,255,0.95);
+      color: #7a1725;
+      border: 1px solid rgba(255,107,107,0.4);
       box-shadow: var(--shadow);
       opacity: 0;
       transition: opacity 0.2s ease;
@@ -584,7 +681,7 @@ INDEX_HTML = """
       padding: 12px 16px;
       border-radius: 12px;
       border: 1px solid var(--stroke);
-      background: linear-gradient(135deg, rgba(93,160,255,0.2), rgba(124,231,160,0.12));
+      background: linear-gradient(135deg, rgba(58,134,255,0.18), rgba(52,195,143,0.12));
       color: var(--text);
       font-weight: 600;
       cursor: pointer;
@@ -593,29 +690,29 @@ INDEX_HTML = """
     }
     .btn:hover { transform: translateY(-1px) scale(1.01); }
     .btn.save {
-      background: linear-gradient(135deg, #5da0ff, #7ce7a0);
-      color: #041022;
+      background: linear-gradient(135deg, #3a86ff, #34c38f);
+      color: #07101d;
       border: none;
-      box-shadow: 0 12px 30px rgba(92,160,255,0.3);
+      box-shadow: 0 12px 30px rgba(58,134,255,0.25);
     }
     .btn.secondary {
       padding: 10px 14px;
-      background: rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.75);
       border: 1px solid var(--stroke);
       box-shadow: none;
       color: var(--text);
     }
     .btn.danger {
-      background: linear-gradient(135deg, rgba(255,127,157,0.2), rgba(255,127,157,0.32));
-      border-color: rgba(255,127,157,0.4);
-      color: #ffe9f0;
+      background: linear-gradient(135deg, rgba(255,107,107,0.2), rgba(255,107,107,0.32));
+      border-color: rgba(255,107,107,0.45);
+      color: #7a1725;
     }
     .communities { display: grid; gap: 12px; }
     .community {
       border: 1px solid var(--stroke);
-      border-radius: 16px;
-      padding: 10px 12px;
-      background: rgba(255,255,255,0.03);
+      border-radius: 14px;
+      padding: 12px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(236,242,251,0.95));
       box-shadow: var(--shadow);
     }
     .community summary {
@@ -638,7 +735,7 @@ INDEX_HTML = """
       width: 34px;
       height: 34px;
       border-radius: 50%;
-      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(241,245,251,0.85));
       border: 1px solid var(--stroke);
       display: inline-flex;
       align-items: center;
@@ -653,14 +750,14 @@ INDEX_HTML = """
       padding: 4px 8px;
       border-radius: 10px;
       border: 1px solid var(--stroke);
-      background: rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.75);
       font-size: 12px;
       color: var(--muted);
     }
     .badge-mini.pill {
-      background: rgba(124,231,160,0.12);
-      border-color: rgba(124,231,160,0.4);
-      color: #d5ffe4;
+      background: rgba(52,195,143,0.18);
+      border-color: rgba(52,195,143,0.45);
+      color: #0b3a2b;
     }
     .community details > div { margin-top: 12px; }
     .card-header {
@@ -675,9 +772,10 @@ INDEX_HTML = """
       border: 1px solid var(--stroke);
       border-radius: 14px;
       padding: 12px;
-      background: rgba(255,255,255,0.03);
+      background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(236,242,251,0.95));
       display: grid;
       gap: 10px;
+      box-shadow: var(--shadow);
     }
     .toast {
       position: fixed;
@@ -685,9 +783,9 @@ INDEX_HTML = """
       right: 20px;
       padding: 12px 14px;
       border-radius: 12px;
-      background: rgba(0,0,0,0.8);
-      color: #dfffe4;
-      border: 1px solid rgba(124,231,160,0.4);
+      background: rgba(255,255,255,0.95);
+      color: #0b3a2b;
+      border: 1px solid rgba(52,195,143,0.45);
       box-shadow: var(--shadow);
       opacity: 0;
       transform: translateY(10px);
@@ -701,7 +799,7 @@ INDEX_HTML = """
     .modal {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.55);
+      background: rgba(8, 16, 28, 0.35);
       display: none;
       align-items: center;
       justify-content: center;
@@ -709,7 +807,7 @@ INDEX_HTML = """
     }
     .modal.show { display: flex; }
     .modal-card {
-      background: #0d1a2d;
+      background: rgba(255,255,255,0.92);
       border: 1px solid var(--stroke);
       border-radius: 16px;
       padding: 18px;
@@ -723,7 +821,7 @@ INDEX_HTML = """
       width: 72px;
       height: 72px;
       border-radius: 50%;
-      background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+      background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(241,245,251,0.85));
       border: 1px solid var(--stroke);
       display: inline-flex;
       align-items: center;
@@ -757,14 +855,25 @@ INDEX_HTML = """
       <div class="card">
         <h3>Общие параметры</h3>
         <label for="cronSimple">Частота проверки</label>
-        <select id="cronSimple">
-          <option value="*/5 * * * *">Каждые 5 минут</option>
-          <option value="*/10 * * * *">Каждые 10 минут</option>
-          <option value="*/15 * * * *">Каждые 15 минут</option>
-          <option value="*/30 * * * *">Каждые 30 минут</option>
-          <option value="0 * * * *">Каждый час</option>
-          <option value="custom">Кастомное cron-выражение</option>
-        </select>
+        <div class="custom-select" data-select="cronSimple">
+          <select id="cronSimple">
+            <option value="*/5 * * * *">Каждые 5 минут</option>
+            <option value="*/10 * * * *">Каждые 10 минут</option>
+            <option value="*/15 * * * *">Каждые 15 минут</option>
+            <option value="*/30 * * * *">Каждые 30 минут</option>
+            <option value="0 * * * *">Каждый час</option>
+            <option value="custom">Кастомное cron-выражение</option>
+          </select>
+          <div class="select-display" data-role="display">Каждые 10 минут</div>
+          <div class="select-options" data-role="options">
+            <div class="select-option" data-value="*/5 * * * *">Каждые 5 минут</div>
+            <div class="select-option" data-value="*/10 * * * *">Каждые 10 минут</div>
+            <div class="select-option" data-value="*/15 * * * *">Каждые 15 минут</div>
+            <div class="select-option" data-value="*/30 * * * *">Каждые 30 минут</div>
+            <div class="select-option" data-value="0 * * * *">Каждый час</div>
+            <div class="select-option" data-value="custom">Кастомное cron-выражение</div>
+          </div>
+        </div>
         <div id="cronCustomBlock" style="margin-top:10px; display:none;">
           <label for="cron">Кастомный cron</label>
           <input id="cron" type="text" placeholder="*/10 * * * *" />
@@ -773,14 +882,25 @@ INDEX_HTML = """
         <label for="limit" style="margin-top:12px; display:block;">Максимум постов за один опрос</label>
         <input id="limit" type="number" min="1" max="100" />
         <label for="logRetention" style="margin-top:12px; display:block;">Сколько дней хранить логи</label>
-        <select id="logRetention">
-          <option value="1">1 день</option>
-          <option value="2">2 дня</option>
-          <option value="3">3 дня</option>
-          <option value="7">7 дней</option>
-          <option value="14">14 дней</option>
-          <option value="30">30 дней</option>
-        </select>
+        <div class="custom-select" data-select="logRetention">
+          <select id="logRetention">
+            <option value="1">1 день</option>
+            <option value="2">2 дня</option>
+            <option value="3">3 дня</option>
+            <option value="7">7 дней</option>
+            <option value="14">14 дней</option>
+            <option value="30">30 дней</option>
+          </select>
+          <div class="select-display" data-role="display">2 дня</div>
+          <div class="select-options" data-role="options">
+            <div class="select-option" data-value="1">1 день</div>
+            <div class="select-option" data-value="2">2 дня</div>
+            <div class="select-option" data-value="3">3 дня</div>
+            <div class="select-option" data-value="7">7 дней</div>
+            <div class="select-option" data-value="14">14 дней</div>
+            <div class="select-option" data-value="30">30 дней</div>
+          </div>
+        </div>
         <div class="row-inline" style="margin-top:10px;">
           <label class="toggle">
             <input type="checkbox" id="refreshAvatars">
@@ -1102,6 +1222,7 @@ INDEX_HTML = """
     }
 
     function attachHandlers() {
+      initCustomSelects();
       communitiesEl.addEventListener('click', (e) => {
         const removeIdx = e.target.getAttribute('data-remove');
         if (removeIdx !== null) {
@@ -1183,6 +1304,59 @@ INDEX_HTML = """
       });
     }
 
+    function updateCustomSelectDisplay(selectEl) {
+      const wrapper = selectEl.closest('.custom-select');
+      if (!wrapper) return;
+      const display = wrapper.querySelector('[data-role="display"]');
+      const options = wrapper.querySelectorAll('.select-option');
+      const selectedOption = [...selectEl.options].find((opt) => opt.value === selectEl.value);
+      if (display && selectedOption) display.textContent = selectedOption.textContent;
+      options.forEach((opt) => {
+        opt.classList.toggle('selected', opt.getAttribute('data-value') === selectEl.value);
+      });
+    }
+
+    function closeAllCustomSelects(except = null) {
+      document.querySelectorAll('.custom-select.open').forEach((el) => {
+        if (el !== except) el.classList.remove('open');
+      });
+      document.querySelectorAll('.card.raise').forEach((card) => {
+        card.classList.remove('raise');
+      });
+    }
+
+    function initCustomSelects() {
+      document.querySelectorAll('.custom-select').forEach((wrapper) => {
+        const selectEl = wrapper.querySelector('select');
+        const display = wrapper.querySelector('[data-role="display"]');
+        const options = wrapper.querySelectorAll('.select-option');
+        updateCustomSelectDisplay(selectEl);
+
+        display.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isOpen = wrapper.classList.contains('open');
+          closeAllCustomSelects(wrapper);
+          wrapper.classList.toggle('open', !isOpen);
+          const card = wrapper.closest('.card');
+          if (card && !isOpen) card.classList.add('raise');
+        });
+
+        options.forEach((opt) => {
+          opt.addEventListener('click', () => {
+            const value = opt.getAttribute('data-value');
+            selectEl.value = value;
+            updateCustomSelectDisplay(selectEl);
+            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+            wrapper.classList.remove('open');
+            const card = wrapper.closest('.card');
+            if (card) card.classList.remove('raise');
+          });
+        });
+      });
+
+      document.addEventListener('click', () => closeAllCustomSelects());
+    }
+
     function syncCronUI(cronValue) {
       const simple = document.getElementById('cronSimple');
       const customBlock = document.getElementById('cronCustomBlock');
@@ -1196,6 +1370,7 @@ INDEX_HTML = """
         customBlock.style.display = 'block';
       }
       cronInput.value = cronValue;
+      updateCustomSelectDisplay(simple);
     }
 
     async function loadConfig() {
@@ -1205,7 +1380,9 @@ INDEX_HTML = """
         avatarCache = data.avatar_cache || {};
         syncCronUI(data.general?.cron || '*/10 * * * *');
         document.getElementById('limit').value = data.general?.posts_limit || 10;
-        document.getElementById('logRetention').value = (data.general?.log_retention_days || 7);
+        const logRetentionSelect = document.getElementById('logRetention');
+        logRetentionSelect.value = (data.general?.log_retention_days || 7);
+        updateCustomSelectDisplay(logRetentionSelect);
         document.getElementById('blocked').value = (data.general?.blocked_keywords || []).join('\\n');
         document.getElementById('refreshAvatars').checked = data.general?.refresh_avatars !== false;
         const vkField = document.getElementById('vkToken');
