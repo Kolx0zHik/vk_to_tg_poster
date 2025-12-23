@@ -12,7 +12,7 @@ import yaml
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
@@ -22,7 +22,6 @@ CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "config/config.yaml"))
 EXAMPLE_CONFIG = BASE_DIR / "config/config.example.yaml"
 AVATAR_CACHE = BASE_DIR / "data/avatars.json"
 AVATAR_TTL_SECONDS = 24 * 3600
-CLIENT_DIR = BASE_DIR / "client"
 
 app = FastAPI(title="VK → Telegram Poster", version="0.1.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -292,20 +291,10 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
-    index_path = CLIENT_DIR / "index.html"
+    index_path = BASE_DIR / "static" / "index.html"
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>client/index.html не найден</h1>")
-
-
-@app.get("/style.css")
-async def client_styles() -> FileResponse:
-    return FileResponse(CLIENT_DIR / "style.css")
-
-
-@app.get("/script.js")
-async def client_script() -> FileResponse:
-    return FileResponse(CLIENT_DIR / "script.js")
+    return HTMLResponse(content="<h1>static/index.html не найден</h1>")
 
 
 @app.get("/api/config")
