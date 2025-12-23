@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VK to TG Reposter</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="apple-touch-icon" href="/static/logo.png">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <div class="logo-icon">
+                    <img src="/static/logo.png" alt="VK to TG Reposter logo">
+                </div>
+                <div>
+                    <h1>VK to TG Reposter</h1>
+                    <p class="subtitle">Панель управления</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="openLogsBtn" class="btn btn-secondary">
+                    <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19h16"/>
+                        <path d="M4 15h10"/>
+                        <path d="M4 11h16"/>
+                        <path d="M4 7h10"/>
+                    </svg>
+                    Логи
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-grid">
+            <!-- Settings Card -->
+            <div class="card card-compact">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
+                    <div>
+                        <h2>Основные настройки</h2>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="separator"></div>
+                    <div class="form-group">
+                        <span class="label-text">
+                            Интервал проверки (минуты)
+                            <small>Как часто сервис проверяет новые посты.</small>
+                        </span>
+                        <div class="select-wrapper">
+                            <select id="interval">
+                                <option value="5">5 минут</option>
+                                <option value="10">10 минут</option>
+                                <option value="30">30 минут</option>
+                                <option value="60">60 минут</option>
+                                <option value="custom">Своё выражение</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+
+                    <div class="form-group hidden" id="cronCustomRow">
+                        <label for="cronCustom">Кастомный cron</label>
+                        <input type="text" id="cronCustom" placeholder="*/10 * * * *">
+                    </div>
+
+                    <div class="switch-group">
+                        <label class="switch-label">
+                            <span class="label-text">
+                                Обновлять аватары
+                                <small>Раз в сутки подтягивать фото сообществ</small>
+                            </span>
+                            <input type="checkbox" id="refreshAvatars" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="separator"></div>
+
+                    <div class="form-group">
+                        <span class="label-text">
+                            Количество постов за цикл
+                            <small>Сколько последних постов проверять за один запуск.</small>
+                        </span>
+                        <div class="input-with-suffix">
+                            <input type="number" id="postsCount" value="10" min="1" max="100">
+                            <span class="suffix">постов</span>
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+
+                    <div class="form-group">
+                        <span class="label-text">
+                            Хранить логи (дней)
+                            <small>Сколько дней хранить файл логов.</small>
+                        </span>
+                        <div class="select-wrapper">
+                            <select id="logRetention">
+                                <option value="1">1 день</option>
+                                <option value="2">2 дня</option>
+                                <option value="3">3 дня</option>
+                                <option value="7">7 дней</option>
+                                <option value="14">14 дней</option>
+                                <option value="30">30 дней</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+
+                    <label class="switch-label">
+                        <span class="label-text">
+                            Фильтр по словам
+                            <small>Применять стоп-слова к постам (каждое с новой строки)</small>
+                        </span>
+                        <input type="checkbox" id="filterKeywords" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <div class="form-group">
+                        <textarea id="blockedKeywords" rows="4" placeholder="реклама&#10;спам"></textarea>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <button id="saveSettingsBtn" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Сохранить
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tokens Card -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    </div>
+                    <div>
+                        <h2>Токены доступа</h2>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="separator"></div>
+                    <div class="form-group">
+                        <label for="vkToken">VK API Token</label>
+                        <div class="password-input">
+                            <input type="password" id="vkToken" placeholder="vk1.a.sw3...">
+                            <button type="button" class="toggle-password" data-target="vkToken">
+                                <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+
+                    <div class="form-group">
+                        <label for="tgBotToken">Telegram Bot Token</label>
+                        <div class="password-input">
+                            <input type="password" id="tgBotToken" placeholder="123456:ABC...">
+                            <button type="button" class="toggle-password" data-target="tgBotToken">
+                                <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                                <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="separator"></div>
+
+                    <div class="form-group">
+                        <label for="tgChannel">Telegram канал</label>
+                        <input type="text" id="tgChannel" placeholder="@my_channel или -100...">
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <button id="saveTokensBtn" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Сохранить
+                    </button>
+                </div>
+            </div>
+
+            <!-- Groups Section -->
+            <div class="card full-width">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
+                    <div>
+                        <h2>Отслеживаемые группы</h2>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="add-group-row">
+                        <input type="text" id="newGroupInput" placeholder="https://vk.com/public123456 или ID группы">
+                        <button id="addGroupBtn" class="btn btn-primary">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Добавить
+                        </button>
+                    </div>
+
+                    <div class="groups-list" id="groupsList">
+                        <!-- Groups will be added here via JS -->
+                        <div class="empty-state">Список групп пуст</div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Logs Modal -->
+    <div id="logsModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Системные логи</h3>
+            </div>
+            <div class="logs-container" id="logsContainer">
+                <!-- Logs will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button id="refreshLogsBtn" class="btn btn-secondary">Обновить</button>
+                <button id="closeLogsBtn" class="btn btn-secondary">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/script.js"></script>
+</body>
+</html>
