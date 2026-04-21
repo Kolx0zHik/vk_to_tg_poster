@@ -17,6 +17,7 @@ class Cache:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._store: Dict = {"dedup": [], "last_seen": {}}
+        self._dirty = False
         self._load()
 
     def _load(self) -> None:
@@ -31,32 +32,44 @@ class Cache:
                 }
             except Exception:
                 self._store = {"dedup": [], "last_seen": {}}
+        self._dirty = False
         self._purge()
 
     def _persist(self) -> None:
         self.path.write_text(json.dumps(self._store, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._dirty = False
 
     def _purge(self) -> None:
         now_ts = int(time.time())
         ttl = now_ts - self.DEDUP_TTL
         dedup: List[Dict] = self._store.get("dedup", [])
         dedup = [item for item in dedup if item.get("ts", 0) >= ttl]
+        if len(dedup) != len(self._store.get("dedup", [])):
+            self._dirty = True
         self._store["dedup"] = dedup
+
+    def flush(self) -> None:
+        if self._dirty:
+            self._persist()
 
     def is_duplicate(self, post_hash: str) -> bool:
         self._purge()
         return any(item.get("hash") == post_hash for item in self._store.get("dedup", []))
 
-    def remember(self, community_id: int, post_hash: str, post_ts: Optional[int] = None) -> None:
+    def remember(self, community_id: int, post_hash: str, post_ts: Optional[int] = None, persist: bool = True) -> None:
         self._purge()
         ts = int(time.time())
         self._store.setdefault("dedup", []).append({"hash": post_hash, "ts": ts})
-        self._persist()
+        self._dirty = True
+        if persist:
+            self._persist()
 
-    def update_last_seen(self, community_id: int, post_id: int, post_ts: Optional[int]) -> None:
+    def update_last_seen(self, community_id: int, post_id: int, post_ts: Optional[int], persist: bool = True) -> None:
         ts = post_ts or int(time.time())
         self._store.setdefault("last_seen", {})[str(community_id)] = {"ts": ts, "post_id": post_id}
-        self._persist()
+        self._dirty = True
+        if persist:
+            self._persist()
 
     def get_last_seen(self, community_id: int) -> tuple[Optional[int], Optional[int]]:
         entry = self._store.get("last_seen", {}).get(str(community_id), {})
