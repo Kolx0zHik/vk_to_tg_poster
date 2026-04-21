@@ -3,7 +3,14 @@ name: Publish Docker image
 on:
   push:
     branches: [ main ]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker tag to publish to GHCR"
+        required: true
+        default: "test-manual"
 
 permissions:
   contents: read
@@ -17,6 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve image tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -29,4 +47,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
