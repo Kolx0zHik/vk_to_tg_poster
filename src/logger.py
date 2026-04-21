@@ -23,9 +23,16 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     _cleanup_old_logs(log_path, settings.log_retention_days)
 
     logger = logging.getLogger("poster")
-    logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+    file_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    console_level = logging.WARNING
+    logger.setLevel(min(file_level, console_level))
+    logger.propagate = False
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     formatter.converter = time.localtime  # логируем в локальном часовом поясе
+
+    for existing in list(logger.handlers):
+        logger.removeHandler(existing)
+        existing.close()
 
     handler = RotatingFileHandler(
         log_path,
@@ -33,10 +40,12 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
         backupCount=settings.log_rotation.backup_count,
         encoding="utf-8",
     )
+    handler.setLevel(file_level)
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
     console = logging.StreamHandler()
+    console.setLevel(console_level)
     console.setFormatter(formatter)
     logger.addHandler(console)
 
