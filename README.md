@@ -50,6 +50,16 @@ pip install -r requirements.txt
 CONFIG_PATH=config/config.yaml RUN_MODE=once python -m src.main
 ```
 
+## Автогенерация commit message
+
+В репозитории есть versioned hook для автогенерации текста коммита по staged-изменениям:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+После этого `VS Code` и обычный `git commit` будут использовать `.githooks/prepare-commit-msg`, который запускает `python3 scripts/generate_commit_message.py --staged` и перезаписывает commit message для обычных коммитов. Для временного отключения можно использовать `AUTO_COMMIT_MESSAGE_SKIP=1`.
+
 ## Ограничения MVP
 - Каждое вложение отправляется отдельным сообщением.
 - Один общий cron для всех сообществ.
