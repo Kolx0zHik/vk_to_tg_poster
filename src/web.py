@@ -42,6 +42,7 @@ class GeneralModel(BaseModel):
     log_rotation: LogRotationModel = LogRotationModel()
     blocked_keywords: List[str] = Field(default_factory=list)
     refresh_avatars: bool = True
+    log_retention_days: int = Field(2, ge=0)
 
     @field_validator("cron")
     @classmethod
@@ -151,11 +152,9 @@ def _fetch_vk_info(value: str) -> dict | None:
         )
         token = os.getenv("VK_API_TOKEN", cfg.vk.token)
         api_version = cfg.general.vk_api_version
-        refresh_avatars = cfg.general.refresh_avatars
     except Exception:
         token = os.getenv("VK_API_TOKEN", "")
         api_version = "5.199"
-        refresh_avatars = True
 
     if not token:
         return None
@@ -266,6 +265,27 @@ def _save_avatar_cache(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _get_cached_community_info(value: str, refresh_avatars: bool) -> dict | None:
+    cache_key = _normalize_owner_id(value).strip().lower()
+    if not cache_key:
+        return None
+
+    cached = _read_avatar_cache().get(cache_key)
+    if not cached:
+        return None
+
+    fetched_at = int(cached.get("fetched_at") or 0)
+    is_fresh = fetched_at > 0 and (int(time.time()) - fetched_at) < AVATAR_TTL_SECONDS
+    if refresh_avatars and not is_fresh:
+        return None
+
+    return {
+        "id": value,
+        "name": cached.get("name") or "",
+        "photo": cached.get("photo"),
+    }
+
+
 def _cleanup_cache(config_dict: dict) -> None:
     # Пока не трогаем last_seen при изменении сообществ, чтобы не потерять состояние
     return
@@ -343,11 +363,27 @@ async def save_config(payload: SaveRequest) -> dict:
 
 @app.get("/api/community_info")
 async def community_info(value: str) -> dict:
+    try:
+        cfg = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+        refresh_avatars = cfg.general.refresh_avatars
+    except Exception:
+        refresh_avatars = True
+
+    cached = _get_cached_community_info(value, refresh_avatars=refresh_avatars)
+    if cached:
+        return cached
+
     info = _fetch_vk_info(value)
     if not info:
-        return {"id": value, "name": "", "photo": None}
+        return cached or {"id": value, "name": "", "photo": None}
     cache = _read_avatar_cache()
-    cache_key = (info.get("id") or value).strip().lower()
+    cache_key = _normalize_owner_id(info.get("id") or value).strip().lower()
     cache[cache_key] = {
         "photo": info.get("photo"),
         "name": info.get("name") or "",
