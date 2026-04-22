@@ -121,12 +121,10 @@ from src.pipeline import process_communities
 
 
 class LoggingTests(unittest.TestCase):
-    def test_configure_logging_is_idempotent(self) -> None:
+    def test_configure_logging_is_idempotent_and_keeps_file_log_compact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            settings = GeneralSettings(
-                log_file=str(Path(tmpdir) / "poster.log"),
-                log_level="INFO",
-            )
+            log_path = Path(tmpdir) / "poster.log"
+            settings = GeneralSettings(log_file=str(log_path), log_level="DEBUG")
 
             logger = configure_logging(settings)
             logger = configure_logging(settings)
@@ -143,6 +141,27 @@ class LoggingTests(unittest.TestCase):
                 if not getattr(handler, "baseFilename", None)
             }
             self.assertEqual(stream_levels, {logging.WARNING})
+
+            for handler in logger.handlers:
+                if not getattr(handler, "baseFilename", None):
+                    handler.setLevel(logging.CRITICAL)
+
+            logger.debug("скрытый debug")
+            try:
+                raise RuntimeError("boom")
+            except RuntimeError:
+                logger.exception("Короткая ошибка")
+
+            for handler in logger.handlers:
+                flush = getattr(handler, "flush", None)
+                if flush:
+                    flush()
+
+            content = log_path.read_text(encoding="utf-8")
+            self.assertIn("Короткая ошибка", content)
+            self.assertNotIn("скрытый debug", content)
+            self.assertNotIn("Traceback", content)
+            self.assertNotIn("RuntimeError: boom", content)
 
 
 class WebConfigTests(unittest.TestCase):
