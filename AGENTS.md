@@ -156,6 +156,29 @@ These constraints are part of the current product, not accidental limitations:
 
 Do not silently “improve” these constraints unless the task asks for a product or architecture change.
 
+## Subagent Workflow
+
+For bugfix and feature tasks, prefer the following default subagent workflow when the work can be split safely:
+
+- Subagent 1: investigate the problem, gather context, and localize the likely change area.
+- Subagent 2: implement the agreed code changes.
+- Subagent 3: check compatibility, regression risk, and verification gaps after implementation.
+- Main agent: coordinate the work, collect findings, resolve ambiguous points, integrate results, and perform final validation.
+
+Use this workflow as the default operating model for implementation tasks, not as a rigid requirement for every small change.
+
+- If the task is too small, tightly coupled, or not worth parallelizing, the main agent may keep the work in one place.
+- Even when not all three subagents are used, the main agent should still cover the same responsibilities logically: investigation, implementation, and regression review.
+- Subagents should stay focused on their assigned role and avoid taking over final release responsibilities unless the main agent explicitly delegates that final step.
+
+### Git And Deploy Responsibilities
+
+- The main agent is responsible for final `git push` decisions and for triggering any branch or image update workflow.
+- Subagents should not push branches or publish images on their own unless the main agent explicitly assigns that as a final handoff step.
+- If changes are pushed to `main`, push `main` and update the `latest` image.
+- If changes are pushed to any non-`main` branch, push that branch and update the `test` image.
+- When deciding whether to push or publish, the main agent should confirm that the branch target matches the intended image tag before proceeding.
+
 ## Guidance For Future Agents
 
 - Start by reading `README.md`, `src.main`, `src.web`, `src.pipeline`, and `src.config`.
