@@ -6,348 +6,124 @@
 
 Сервис для автоматического переноса новых постов из сообществ ВКонтакте в Telegram-канал.
 
-Проект запускается в одном контейнере и делает сразу две вещи:
+## Что умеет
 
-- в фоне крутит планировщик публикаций
-- поднимает веб-интерфейс для настройки `config.yaml`
+- забирает новые посты из VK и публикует их в Telegram
+- работает по расписанию
+- настраивается через web-интерфейс
+- поддерживает несколько сообществ
+- защищает от дублей
+- хранит состояние в обычных файлах, без базы данных
 
-Основной способ запуска: `docker compose` с готовым образом из `ghcr.io`.
+## Быстрый старт
 
-## Что делает проект
-
-`VK → Telegram Poster` регулярно проверяет указанные VK-сообщества, отбирает новые записи и публикует их в Telegram.
-
-Поддерживаются:
-
-- текстовые посты
-- фото
-- видео
-- аудио
-- ссылки
-- несколько сообществ в одной конфигурации
-- фильтрация по стоп-словам
-- защита от дублей
-- хранение состояния без базы данных
-
-Сервис хранит рабочее состояние в файлах:
-
-- `config/config.yaml` — настройки
-- `data/cache.json` — кэш уже обработанных постов и информация о том, до какого места сервис уже просмотрел записи в каждом сообществе
-- `logs/poster.log` — логи
-
-## Как это работает
-
-На старте контейнера:
-
-1. Проверяется наличие `config/config.yaml`
-2. Если файла нет, он создается из `config/config.example.yaml`
-3. Запускается планировщик `python -m src.main`
-4. Поднимается веб-интерфейс `uvicorn src.web:app`
-
-По умолчанию веб-интерфейс доступен на `http://localhost:8222`.
-
-## Быстрый старт через Docker Compose
-
-Это основной и рекомендуемый способ запуска.
-
-### 1. Клонируйте репозиторий
+Основной способ запуска:
 
 ```bash
-git clone https://github.com/kolx0zhik/vk_to_tg_poster.git
-cd vk_to_tg_poster
-```
-
-### 2. Подготовьте конфиг
-
-Если хотите настроить все заранее вручную:
-
-```bash
-cp config/config.example.yaml config/config.yaml
-```
-
-Если не сделать этого шага, контейнер сам создаст `config/config.yaml` из примера при первом запуске.
-
-### 3. Укажите токены и канал
-
-Сервис можно запускать двумя способами:
-
-- хранить токены в `config/config.yaml`
-- или передавать их через `.env`
-
-Оба варианта поддерживаются в текущем `docker-compose.yml`.
-
-Пример `.env`:
-
-```env
-TZ=Europe/Moscow
-PORT=8222
-VK_API_TOKEN=vk_service_or_user_token
-TELEGRAM_BOT_TOKEN=1234567890:telegram_bot_token
-```
-
-### 4. Отредактируйте `config/config.yaml`
-
-Минимальный пример:
-
-```yaml
-general:
-  cron: "*/15 * * * *"
-  vk_api_version: "5.199"
-  posts_limit: 10
-  cache_file: data/cache.json
-  log_file: logs/poster.log
-  log_level: INFO
-  log_rotation:
-    max_bytes: 10485760
-    backup_count: 5
-  blocked_keywords: []
-  refresh_avatars: true
-  log_retention_days: 2
-
-vk:
-  token: ""
-
-telegram:
-  channel_id: "@your_channel"
-  bot_token: ""
-
-communities:
-  - id: "club123456789"
-    name: "Мое сообщество"
-    active: true
-    content_types:
-      text: true
-      photo: true
-      video: true
-      audio: true
-      link: true
-```
-
-Важно:
-
-- `vk.token` может быть пустым, если используется `VK_API_TOKEN`
-- `telegram.bot_token` может быть пустым, если используется `TELEGRAM_BOT_TOKEN`
-- `telegram.channel_id` нужно задать обязательно
-- `communities[].id` можно указывать как `club123`, `public123`, `-123`, `id123` или `https://vk.com/...`
-
-### 5. Запустите сервис
-
-```bash
-docker compose pull
 docker compose up -d
 ```
 
-После запуска будут доступны:
+После запуска:
 
-- веб-интерфейс: `http://localhost:8222`
-- API конфигурации: `http://localhost:8222/api/config`
+1. Откройте `http://localhost:8222`
+2. Заполните настройки в web-интерфейсе
+3. Сохраните конфиг
 
-### 6. Посмотрите логи
+Если `config/config.yaml` отсутствует, контейнер создаст его автоматически из `config/config.example.yaml`.
 
-```bash
-docker compose logs -f
-```
+## Что нужно указать в интерфейсе
 
-Остановить сервис:
+Минимально нужны:
 
-```bash
-docker compose down
-```
+- VK token
+- Telegram bot token
+- Telegram channel ID
+- хотя бы одно VK-сообщество
+- расписание запуска
 
-## Что нужно подготовить перед запуском
+## Где хранятся данные
 
-### Telegram
+- `config/` — конфигурация
+- `data/` — служебные данные и кэш обработанных постов
+- `logs/` — логи
 
-Нужно:
+Все эти директории подключаются как volumes и сохраняются между перезапусками контейнера.
 
-- создать бота через [@BotFather](https://t.me/BotFather)
-- добавить бота в канал
-- выдать ему права администратора
-- указать `telegram.channel_id`
+## Варианты запуска
 
-Обычно `channel_id` — это:
+### Docker Compose
 
-- `@channel_name`
-- или числовой идентификатор канала
-
-### VK
-
-Нужен токен VK API, с которым приложение сможет читать посты публичных страниц или сообществ.
-
-Токен можно передать:
-
-- через `VK_API_TOKEN`
-- или через `vk.token` в `config/config.yaml`
-
-## Веб-интерфейс
-
-Веб-интерфейс нужен не только для просмотра.
-
-Он умеет:
-
-- читать текущий YAML-конфиг
-- валидировать настройки перед сохранением
-- редактировать список сообществ
-- обновлять данные по сообществам через VK API
-- кэшировать аватары в `data/avatars.json`
-
-Если `config/config.yaml` отсутствует или поврежден, интерфейс пытается опереться на `config/config.example.yaml`.
-
-## Режимы запуска
-
-По умолчанию контейнер работает в режиме `scheduled`, то есть запускает публикацию по cron-расписанию из конфига.
-
-Поддерживаются режимы:
-
-- `RUN_MODE=scheduled` — обычная работа по расписанию
-- `RUN_MODE=once` — один однократный запуск без цикла
-
-Пример разового запуска через Compose:
+Основной пользовательский сценарий:
 
 ```bash
-docker compose run --rm -e RUN_MODE=once vk2tg
-```
-
-## Переменные окружения
-
-Основные переменные:
-
-- `CONFIG_PATH` — путь к конфигу, по умолчанию `config/config.yaml`
-- `RUN_MODE` — `scheduled` или `once`
-- `PORT` — порт веб-интерфейса, по умолчанию `8222`
-- `TZ` — часовой пояс контейнера, по умолчанию `Europe/Moscow`
-- `VK_API_TOKEN` — токен VK API, имеет приоритет над `vk.token`
-- `TELEGRAM_BOT_TOKEN` — токен Telegram-бота, имеет приоритет над `telegram.bot_token`
-
-## Сценарии запуска
-
-Проект рассчитан на несколько сценариев.
-
-### 1. Готовый запуск на сервере
-
-Это основной сценарий для большинства пользователей.
-
-Используется:
-
-- готовый образ из `ghcr.io`
-- файл [`docker-compose.yml`](./docker-compose.yml)
-
-Запуск:
-
-```bash
-docker compose pull
 docker compose up -d
 ```
 
-### 2. Сборка из исходников
+Файл [`docker-compose.yml`](./docker-compose.yml) использует готовый образ:
 
-Этот сценарий нужен, если вы хотите менять код, стили или поведение сервиса под себя.
+- `ghcr.io/kolx0zhik/vk_to_tg_poster:latest`
 
-Используется:
+### Сборка из исходников
 
-- локальная сборка через `Dockerfile`
-- файл [`docker-compose.dev.yml`](./docker-compose.dev.yml)
-
-Запуск:
+Если хотите менять код и собирать проект самостоятельно:
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-### 3. Ручной запуск без Compose
+Файл [`docker-compose.dev.yml`](./docker-compose.dev.yml) собирает образ из текущего репозитория.
 
-Если вы не хотите использовать `docker compose`, можно собрать и запустить контейнер вручную через `docker build` и `docker run`.
+### Dockerfile и docker run
 
-### 4. Локальная разработка без Docker
-
-Подходит только для разработки и отладки.
-
-## Docker Compose: что именно запускается
-
-Файл [`docker-compose.yml`](./docker-compose.yml) поднимает один сервис `vk2tg`, который:
-
-- использует готовый образ `ghcr.io/kolx0zhik/vk_to_tg_poster:latest`
-- пробрасывает порт `8222`
-- умеет принимать `TZ`, `PORT`, `VK_API_TOKEN` и `TELEGRAM_BOT_TOKEN` из `.env`
-- монтирует директории `config`, `logs` и `data`
-- перезапускается автоматически через `restart: unless-stopped`
-
-Это значит, что ваши настройки, кэш и логи не теряются при пересоздании контейнера.
-
-Файл [`docker-compose.dev.yml`](./docker-compose.dev.yml) делает то же самое, но вместо готового образа собирает локальную версию из текущего репозитория.
-
-## Альтернативный запуск через Dockerfile
-
-Если `docker compose` не нужен, образ можно собрать и запустить вручную.
-
-### Сборка образа
+Если нужен запуск без Compose:
 
 ```bash
 docker build -t vk_to_tg_poster .
-```
-
-### Запуск контейнера
-
-```bash
 docker run -d \
   --name vk_to_tg_poster \
   -p 8222:8222 \
-  -e TZ=Europe/Moscow \
-  -e VK_API_TOKEN=vk_service_or_user_token \
-  -e TELEGRAM_BOT_TOKEN=1234567890:telegram_bot_token \
   -v "$(pwd)/config:/app/config" \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/data:/app/data" \
   vk_to_tg_poster
 ```
 
-Но для большинства пользователей предпочтителен именно `docker compose`: так проще управлять томами, обновлениями и перезапуском.
-
 ## Обновление
 
+Если вы используете готовый образ:
+
 ```bash
-git pull
 docker compose pull
 docker compose up -d
 ```
 
-## Структура проекта
-
-- `src/main.py` — планировщик и точка входа фонового процесса
-- `src/web.py` — веб-интерфейс и API конфигурации
-- `src/pipeline.py` — основной пайплайн обработки постов
-- `src/vk_client.py` — работа с VK API
-- `src/tg_client.py` — отправка сообщений в Telegram
-- `src/config.py` — парсинг и сохранение YAML-конфига
-- `src/cache.py` — кэш дублей и `last_seen`
-- `config/config.example.yaml` — пример конфига
-- `entrypoint.sh` — запуск планировщика и веб-интерфейса в одном контейнере
-
-## Полезно знать
-
-- Проект не использует базу данных
-- Все состояние хранится в файлах
-- Новые посты публикуются в правильном порядке: от старых к новым
-- Дубли отсеиваются по кэшу
-- Если токены или канал не заданы, планировщик не падает, а пропускает запуск с предупреждением в логах
-
-## Локальный запуск без Docker
-
-Этот вариант не основной, но возможен для разработки:
+Если вы собираете проект из исходников:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp config/config.example.yaml config/config.yaml
-CONFIG_PATH=config/config.yaml RUN_MODE=once python -m src.main
-uvicorn src.web:app --host 0.0.0.0 --port 8222
+docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-## Публикуемый образ
+## Настройка через YAML
 
-В репозитории есть workflow публикации контейнера в GHCR:
+Основной сценарий — настройка через web-интерфейс.
 
-- образ публикуется как `ghcr.io/kolx0zhik/vk_to_tg_poster:latest`
+Если нужно, конфиг можно редактировать вручную в файле:
 
-Если вы просто хотите пользоваться проектом локально, достаточно `docker compose up -d --build`.
+- `config/config.yaml`
+
+Если файла еще нет, он будет создан автоматически при первом запуске контейнера.
+
+## Структура проекта
+
+- `src/main.py` — запуск планировщика
+- `src/web.py` — web-интерфейс и API конфигурации
+- `src/pipeline.py` — основной пайплайн обработки постов
+- `src/config.py` — загрузка и сохранение конфигурации
+- `docker-compose.yml` — запуск готового образа
+- `docker-compose.dev.yml` — локальная сборка из исходников
+
+## Важно
+
+- проект не использует базу данных
+- состояние хранится в файлах
+- планировщик и web-интерфейс работают в одном контейнере
