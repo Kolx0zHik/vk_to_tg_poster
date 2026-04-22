@@ -184,6 +184,17 @@ class WebConfigTests(unittest.TestCase):
 
             self.assertIn("log_retention_days: 9", saved)
 
+    def test_load_ui_config_uses_runtime_defaults_when_config_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+
+            with patch.object(web, "CONFIG_PATH", config_path):
+                data = web._load_ui_config()
+
+            self.assertEqual(data["general"]["cache_file"], "data/cache.json")
+            self.assertEqual(data["general"]["log_file"], "data/logs/poster.log")
+            self.assertEqual(data["communities"], [])
+
 
 class VersionTests(unittest.TestCase):
     def test_get_version_reads_version_file(self) -> None:
@@ -193,6 +204,26 @@ class VersionTests(unittest.TestCase):
         dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
         self.assertIn("COPY VERSION ./", dockerfile)
+
+    def test_dockerfile_does_not_copy_dev_config_into_runtime_image(self) -> None:
+        dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+        self.assertNotIn("COPY config ./config", dockerfile)
+
+
+class EntrypointTests(unittest.TestCase):
+    def test_entrypoint_seeds_runtime_config_without_example_copy(self) -> None:
+        entrypoint = Path("entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('CONFIG_PATH="${CONFIG_PATH:-data/config.yaml}"', entrypoint)
+        self.assertNotIn("DATA_EXAMPLE_CONFIG", entrypoint)
+        self.assertNotIn("config.example.yaml", entrypoint)
+
+    def test_entrypoint_traps_shutdown_and_waits_for_children(self) -> None:
+        entrypoint = Path("entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn("trap", entrypoint)
+        self.assertIn("wait", entrypoint)
 
 
 class DataDirectoryDefaultsTests(unittest.TestCase):

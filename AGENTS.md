@@ -25,23 +25,23 @@ Default port is `8222`.
 
 Important environment variables:
 
-- `CONFIG_PATH` defaults to `config/config.yaml`
+- `CONFIG_PATH` defaults to `data/config.yaml`
 - `RUN_MODE` is `scheduled` or `once`
 - `PORT` defaults to `8222`
 - `VK_API_TOKEN` can override `vk.token` from YAML
 - `TELEGRAM_BOT_TOKEN` can override `telegram.bot_token` from YAML
 - `TZ` affects logging timestamps and defaults to `Europe/Moscow`
 
-If `config/config.yaml` is missing, `entrypoint.sh` seeds it from `config/config.example.yaml`.
+If `data/config.yaml` is missing, `entrypoint.sh` creates it with built-in defaults.
 
 ## Repo Layout
 
 - `src/`: application code
-- `config/config.example.yaml`: baseline config template
+- `config/config.example.yaml`: developer-only example config for manual runs from source
 - `static/`: UI assets and logo
 - `.github/workflows/publish.yml`: builds and pushes `ghcr.io/kolx0zhik/vk_to_tg_poster:latest`
 - `Dockerfile`: multi-stage Python 3.11 image
-- `docker-compose.yml`: local container run with mounted `config`, `logs`, and `data`
+- `docker-compose.yml`: local container run with mounted `data`
 - `tests/`: currently almost empty; do not assume meaningful automated coverage exists
 
 ## Architecture Notes
@@ -54,7 +54,7 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - Keep env-var override behavior for VK and Telegram tokens.
 - Keep `config_to_dict` and `save_config_dict` in sync with parser changes.
 - UI validation in `src.web` uses Pydantic models and should remain aligned with dataclass config parsing.
-- Keep `log_retention_days` and other logging-related general settings aligned between `src.config`, `src.web`, and `config/config.example.yaml`.
+- Keep `log_retention_days` and other logging-related general settings aligned between `src.config` and `src.web`.
 
 ### Posting Flow
 
@@ -103,7 +103,7 @@ Be careful with any change that touches both `src.web` and `src.config`; they mu
 - Keep filesystem-based persistence working inside Docker with mounted volumes.
 - Preserve UTF-8 handling for logs, YAML, and JSON files.
 - Keep Russian user-facing messages consistent with the current project tone.
-- Treat `config/config.example.yaml` as documentation for real runtime behavior; update it with schema changes.
+- Treat `config/config.example.yaml` as a developer convenience for manual runs from source; update it when schema changes affect that workflow.
 
 ## Risky Areas
 
@@ -131,14 +131,13 @@ Useful local commands:
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-CONFIG_PATH=config/config.yaml RUN_MODE=once python -m src.main
+CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main
 uvicorn src.web:app --host 0.0.0.0 --port 8222
 docker compose up --build
 ```
 
 If you change config or web validation, also check that:
 
-- the example config still parses
 - the web app can load config without crashing
 - runtime-created directories and files still behave correctly
 

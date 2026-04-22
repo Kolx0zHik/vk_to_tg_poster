@@ -4,27 +4,51 @@ set -e
 CONFIG_PATH="${CONFIG_PATH:-data/config.yaml}"
 RUN_MODE="${RUN_MODE:-scheduled}"
 PORT="${PORT:-8222}"
-EXAMPLE_CONFIG="config/config.example.yaml"
-DATA_EXAMPLE_CONFIG="data/config.example.yaml"
+export CONFIG_PATH RUN_MODE PORT
 
-# Ensure directories exist
 mkdir -p "$(dirname "$CONFIG_PATH")" data/logs
-# Keep a copy of the example config in the runtime data directory
-if [ -f "$EXAMPLE_CONFIG" ] && [ ! -f "$DATA_EXAMPLE_CONFIG" ]; then
-  cp "$EXAMPLE_CONFIG" "$DATA_EXAMPLE_CONFIG"
-fi
-# If config missing, seed from example (without secrets)
-if [ ! -f "$CONFIG_PATH" ] && [ -f "$DATA_EXAMPLE_CONFIG" ]; then
-  cp "$DATA_EXAMPLE_CONFIG" "$CONFIG_PATH"
+
+if [ ! -f "$CONFIG_PATH" ]; then
+  python3 - <<'PY'
+import os
+
+from src.config import default_config_dict, save_config_dict
+
+save_config_dict(default_config_dict(), os.environ["CONFIG_PATH"])
+PY
 fi
 
-# Start the poster in background (scheduled or once, depending on RUN_MODE)
-python -m src.main &
+POSTER_PID=""
+WEB_PID=""
+
+cleanup() {
+  for pid in "$WEB_PID" "$POSTER_PID"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+
+  wait "$WEB_PID" 2>/dev/null || true
+  wait "$POSTER_PID" 2>/dev/null || true
+}
+
+trap cleanup INT TERM EXIT
+
+python3 -m src.main &
 POSTER_PID=$!
 
-# Start web UI (exposes / and /api/config)
-uvicorn src.web:app --host 0.0.0.0 --port "$PORT"
+python3 -m uvicorn src.web:app --host 0.0.0.0 --port "$PORT" &
+WEB_PID=$!
 
-# Cleanup background process on exit
-kill "$POSTER_PID" 2>/dev/null || true
-wait "$POSTER_PID" 2>/dev/null || true
+while kill -0 "$POSTER_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do
+  sleep 1
+done
+
+STATUS=0
+if ! kill -0 "$WEB_PID" 2>/dev/null; then
+  wait "$WEB_PID" || STATUS=$?
+else
+  wait "$POSTER_PID" || STATUS=$?
+fi
+
+exit "$STATUS"

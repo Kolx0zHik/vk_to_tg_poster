@@ -68,6 +68,15 @@ class ConfigError(Exception):
     pass
 
 
+def default_config() -> Config:
+    return Config(
+        general=GeneralSettings(),
+        vk=VKSettings(),
+        telegram=TelegramSettings(),
+        communities=[],
+    )
+
+
 def _load_yaml(path: Path, allow_missing: bool = False) -> Dict:
     if not path.exists():
         if allow_missing:
@@ -215,6 +224,10 @@ def config_to_dict(config: Config) -> Dict:
             for community in config.communities
         ],
     }
+
+
+def default_config_dict() -> Dict:
+    return config_to_dict(default_config())
 
 
 def save_config_dict(data: Dict, path: str | Path) -> None:

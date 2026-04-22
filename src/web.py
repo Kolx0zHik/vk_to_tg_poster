@@ -20,7 +20,6 @@ from .version import get_version
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "data/config.yaml"))
-EXAMPLE_CONFIG = BASE_DIR / "data/config.example.yaml"
 AVATAR_CACHE = BASE_DIR / "data/avatars.json"
 AVATAR_TTL_SECONDS = 24 * 3600
 
@@ -230,23 +229,13 @@ def _fetch_vk_info(value: str) -> dict | None:
 
 
 def _load_ui_config() -> dict:
-    try:
-        config = load_config(
-            CONFIG_PATH,
-            require_tokens=False,
-            require_channel=False,
-            require_communities=False,
-            allow_missing=True,
-        )
-    except ConfigError:
-        fallback = EXAMPLE_CONFIG if EXAMPLE_CONFIG.exists() else CONFIG_PATH
-        config = load_config(
-            fallback,
-            require_tokens=False,
-            require_channel=False,
-            require_communities=False,
-            allow_missing=True,
-        )
+    config = load_config(
+        CONFIG_PATH,
+        require_tokens=False,
+        require_channel=False,
+        require_communities=False,
+        allow_missing=True,
+    )
     return config_to_dict(config)
 
 
