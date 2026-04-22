@@ -1,7 +1,8 @@
 services:
   vk2tg:
-    image: ghcr.io/kolx0zhik/vk_to_tg_poster:latest
-    container_name: vk_to_tg_poster
+    build: .
+    image: vk_to_tg_poster:dev
+    container_name: vk_to_tg_poster_dev
     restart: unless-stopped
     ports:
       - "${PORT:-8222}:8222"

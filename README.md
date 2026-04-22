@@ -11,7 +11,7 @@
 - в фоне крутит планировщик публикаций
 - поднимает веб-интерфейс для настройки `config.yaml`
 
-Основной способ запуска: `docker compose`.
+Основной способ запуска: `docker compose` с готовым образом из `ghcr.io`.
 
 ## Что делает проект
 
@@ -69,20 +69,20 @@ cp config/config.example.yaml config/config.yaml
 
 ### 3. Укажите токены и канал
 
-Для стандартного запуска через текущий `docker-compose.yml` проще всего записать токены прямо в `config/config.yaml`.
+Сервис можно запускать двумя способами:
 
-Важно понимать:
+- хранить токены в `config/config.yaml`
+- или передавать их через `.env`
 
-- приложение поддерживает `VK_API_TOKEN` и `TELEGRAM_BOT_TOKEN`
-- но текущий `docker-compose.yml` по умолчанию прокидывает в контейнер только `TZ`
-- поэтому при запуске без правок Compose-файла надежнее хранить токены в YAML-конфиге
+Оба варианта поддерживаются в текущем `docker-compose.yml`.
 
-Если хотите использовать `.env`, в текущем виде его имеет смысл использовать в первую очередь для `TZ`.
-
-Пример:
+Пример `.env`:
 
 ```env
 TZ=Europe/Moscow
+PORT=8222
+VK_API_TOKEN=vk_service_or_user_token
+TELEGRAM_BOT_TOKEN=1234567890:telegram_bot_token
 ```
 
 ### 4. Отредактируйте `config/config.yaml`
@@ -105,11 +105,11 @@ general:
   log_retention_days: 2
 
 vk:
-  token: "vk_service_or_user_token"
+  token: ""
 
 telegram:
   channel_id: "@your_channel"
-  bot_token: "1234567890:telegram_bot_token"
+  bot_token: ""
 
 communities:
   - id: "club123456789"
@@ -130,12 +130,11 @@ communities:
 - `telegram.channel_id` нужно задать обязательно
 - `communities[].id` можно указывать как `club123`, `public123`, `-123`, `id123` или `https://vk.com/...`
 
-Если хотите именно env-переменные в Docker Compose, добавьте их в секцию `environment` сервиса `vk2tg`.
-
 ### 5. Запустите сервис
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 После запуска будут доступны:
@@ -220,16 +219,62 @@ docker compose run --rm -e RUN_MODE=once vk2tg
 - `VK_API_TOKEN` — токен VK API, имеет приоритет над `vk.token`
 - `TELEGRAM_BOT_TOKEN` — токен Telegram-бота, имеет приоритет над `telegram.bot_token`
 
+## Сценарии запуска
+
+Проект рассчитан на несколько сценариев.
+
+### 1. Готовый запуск на сервере
+
+Это основной сценарий для большинства пользователей.
+
+Используется:
+
+- готовый образ из `ghcr.io`
+- файл [`docker-compose.yml`](./docker-compose.yml)
+
+Запуск:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### 2. Сборка из исходников
+
+Этот сценарий нужен, если вы хотите менять код, стили или поведение сервиса под себя.
+
+Используется:
+
+- локальная сборка через `Dockerfile`
+- файл [`docker-compose.dev.yml`](./docker-compose.dev.yml)
+
+Запуск:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+### 3. Ручной запуск без Compose
+
+Если вы не хотите использовать `docker compose`, можно собрать и запустить контейнер вручную через `docker build` и `docker run`.
+
+### 4. Локальная разработка без Docker
+
+Подходит только для разработки и отладки.
+
 ## Docker Compose: что именно запускается
 
 Файл [`docker-compose.yml`](./docker-compose.yml) поднимает один сервис `vk2tg`, который:
 
-- собирается из локального `Dockerfile`
+- использует готовый образ `ghcr.io/kolx0zhik/vk_to_tg_poster:latest`
 - пробрасывает порт `8222`
+- умеет принимать `TZ`, `PORT`, `VK_API_TOKEN` и `TELEGRAM_BOT_TOKEN` из `.env`
 - монтирует директории `config`, `logs` и `data`
 - перезапускается автоматически через `restart: unless-stopped`
 
 Это значит, что ваши настройки, кэш и логи не теряются при пересоздании контейнера.
+
+Файл [`docker-compose.dev.yml`](./docker-compose.dev.yml) делает то же самое, но вместо готового образа собирает локальную версию из текущего репозитория.
 
 ## Альтернативный запуск через Dockerfile
 
@@ -256,13 +301,14 @@ docker run -d \
   vk_to_tg_poster
 ```
 
-Но для этого проекта предпочтителен именно `docker compose`: так проще управлять томами, обновлениями и перезапуском.
+Но для большинства пользователей предпочтителен именно `docker compose`: так проще управлять томами, обновлениями и перезапуском.
 
 ## Обновление
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 ## Структура проекта
