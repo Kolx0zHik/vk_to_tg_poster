@@ -7,6 +7,22 @@ from pathlib import Path
 from .config import GeneralSettings
 
 
+class CompactFileFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        exc_info = record.exc_info
+        exc_text = record.exc_text
+        stack_info = record.stack_info
+        try:
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+            return super().format(record)
+        finally:
+            record.exc_info = exc_info
+            record.exc_text = exc_text
+            record.stack_info = stack_info
+
+
 def configure_logging(settings: GeneralSettings) -> logging.Logger:
     # Ensure local timezone (default to Europe/Moscow if not provided)
     tz = os.environ.get("TZ", "Europe/Moscow")
@@ -23,12 +39,15 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     _cleanup_old_logs(log_path, settings.log_retention_days)
 
     logger = logging.getLogger("poster")
-    file_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    requested_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    file_level = max(logging.INFO, requested_level)
     console_level = logging.WARNING
     logger.setLevel(min(file_level, console_level))
     logger.propagate = False
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     formatter.converter = time.localtime  # логируем в локальном часовом поясе
+    file_formatter = CompactFileFormatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_formatter.converter = time.localtime
 
     for existing in list(logger.handlers):
         logger.removeHandler(existing)
@@ -41,7 +60,7 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
         encoding="utf-8",
     )
     handler.setLevel(file_level)
-    handler.setFormatter(formatter)
+    handler.setFormatter(file_formatter)
     logger.addHandler(handler)
 
     console = logging.StreamHandler()
