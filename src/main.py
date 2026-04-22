@@ -11,6 +11,7 @@ from .config import ConfigError, load_config
 from .logger import configure_logging
 from .pipeline import process_communities
 from .tg_client import TelegramClient
+from .version import get_version
 from .vk_client import VKClient
 
 
@@ -61,7 +62,7 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
 
 
 def main() -> None:
-    config_path = os.getenv("CONFIG_PATH", "config/config.yaml")
+    config_path = os.getenv("CONFIG_PATH", "data/config.yaml")
     run_mode = os.getenv("RUN_MODE", "scheduled")
 
     try:
@@ -71,6 +72,7 @@ def main() -> None:
         raise SystemExit(1)
 
     logger = configure_logging(config.general)
+    logger.info("Версия проекта: %s", get_version())
     logger.info("Конфигурация загружена из %s", os.path.abspath(config_path))
 
     try:

@@ -23,7 +23,7 @@ COPY entrypoint.sh .
 COPY src ./src
 COPY config ./config
 COPY static ./static
-RUN mkdir -p data logs
+RUN mkdir -p data/logs
 
 EXPOSE 8222
 CMD ["./entrypoint.sh"]

@@ -20,7 +20,7 @@ class GeneralSettings:
     vk_api_version: str = "5.199"
     posts_limit: int = 10
     cache_file: str = "data/cache.json"
-    log_file: str = "logs/poster.log"
+    log_file: str = "data/logs/poster.log"
     log_level: str = "INFO"
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
     blocked_keywords: List[str] = field(default_factory=list)

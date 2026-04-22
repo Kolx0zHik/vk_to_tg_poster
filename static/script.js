@@ -31,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
         openLogsBtn: document.getElementById("openLogsBtn"),
         closeLogsBtn: document.getElementById("closeLogsBtn"),
         refreshLogsBtn: document.getElementById("refreshLogsBtn"),
+        projectVersion: document.getElementById("projectVersion"),
 
         toast: document.getElementById("toast"),
         toastMessage: document.getElementById("toastMessage"),
@@ -165,7 +166,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 posts_limit: parseInt(els.postsCount.value, 10) || 10,
                 vk_api_version: general.vk_api_version || "5.199",
                 cache_file: general.cache_file || "data/cache.json",
-                log_file: general.log_file || "logs/poster.log",
+                log_file: general.log_file || "data/logs/poster.log",
                 log_level: general.log_level || "INFO",
                 log_rotation: general.log_rotation || { max_bytes: 10485760, backup_count: 7 },
                 log_retention_days: parseInt(els.logRetention.value, 10) || 7,
@@ -222,6 +223,9 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await res.json();
             state.config = data;
             state.avatarCache = data.avatar_cache || {};
+            if (els.projectVersion) {
+                els.projectVersion.textContent = data.version ? `v${data.version}` : "";
+            }
             state.communities = (data.communities || []).map((item) => {
                 const cache = state.avatarCache[(item.id || "").toLowerCase()];
                 return {

@@ -118,6 +118,7 @@ from src.config import Community, Config, ContentTypes, GeneralSettings, Telegra
 from src.logger import configure_logging
 from src.models import Post
 from src.pipeline import process_communities
+from src.version import get_version
 
 
 class LoggingTests(unittest.TestCase):
@@ -182,6 +183,25 @@ class WebConfigTests(unittest.TestCase):
                 saved = config_path.read_text(encoding="utf-8")
 
             self.assertIn("log_retention_days: 9", saved)
+
+
+class VersionTests(unittest.TestCase):
+    def test_get_version_reads_version_file(self) -> None:
+        self.assertRegex(get_version(), r"^\d+\.\d+\.\d+$")
+
+
+class DataDirectoryDefaultsTests(unittest.TestCase):
+    def test_general_settings_use_data_directory_defaults(self) -> None:
+        settings = GeneralSettings()
+
+        self.assertEqual(settings.cache_file, "data/cache.json")
+        self.assertEqual(settings.log_file, "data/logs/poster.log")
+
+    def test_web_models_use_data_directory_defaults(self) -> None:
+        general = web.GeneralModel(cron="*/15 * * * *")
+
+        self.assertEqual(general.cache_file, "data/cache.json")
+        self.assertEqual(general.log_file, "data/logs/poster.log")
 
 
 class AvatarCacheTests(unittest.TestCase):

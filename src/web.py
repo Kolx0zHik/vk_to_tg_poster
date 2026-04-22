@@ -16,14 +16,15 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
+from .version import get_version
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "config/config.yaml"))
-EXAMPLE_CONFIG = BASE_DIR / "config/config.example.yaml"
+CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "data/config.yaml"))
+EXAMPLE_CONFIG = BASE_DIR / "data/config.example.yaml"
 AVATAR_CACHE = BASE_DIR / "data/avatars.json"
 AVATAR_TTL_SECONDS = 24 * 3600
 
-app = FastAPI(title="VK → Telegram Poster", version="0.1.0")
+app = FastAPI(title="VK → Telegram Poster", version=get_version())
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
@@ -37,7 +38,7 @@ class GeneralModel(BaseModel):
     vk_api_version: str = "5.199"
     posts_limit: int = Field(10, ge=1, le=100)
     cache_file: str = "data/cache.json"
-    log_file: str = "logs/poster.log"
+    log_file: str = "data/logs/poster.log"
     log_level: str = Field("INFO", pattern=r"(?i)^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     log_rotation: LogRotationModel = LogRotationModel()
     blocked_keywords: List[str] = Field(default_factory=list)
@@ -322,6 +323,7 @@ async def get_config() -> dict:
     data = _load_ui_config()
     vk_token_set = bool(data.get("vk", {}).get("token") or os.getenv("VK_API_TOKEN"))
     tg_token_set = bool(data.get("telegram", {}).get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN"))
+    data["version"] = get_version()
     data["vk"] = {"token_set": vk_token_set}
     data["telegram"] = {"channel_id": data.get("telegram", {}).get("channel_id", ""), "bot_token_set": tg_token_set}
     data["avatar_cache"] = _read_avatar_cache()
@@ -404,7 +406,7 @@ async def get_logs(lines: int = 200) -> dict:
         )
         log_path = Path(cfg.general.log_file)
     except Exception:
-        log_path = Path("logs/poster.log")
+        log_path = Path("data/logs/poster.log")
 
     if not log_path.exists():
         return {"lines": [], "path": str(log_path)}

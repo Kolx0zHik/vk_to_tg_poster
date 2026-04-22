@@ -3,7 +3,7 @@ general:
   vk_api_version: "5.199"
   posts_limit: 10
   cache_file: data/cache.json
-  log_file: logs/poster.log
+  log_file: data/logs/poster.log
   log_level: INFO
   log_rotation:
     max_bytes: 10485760
