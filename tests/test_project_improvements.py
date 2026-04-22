@@ -189,6 +189,11 @@ class VersionTests(unittest.TestCase):
     def test_get_version_reads_version_file(self) -> None:
         self.assertRegex(get_version(), r"^\d+\.\d+\.\d+$")
 
+    def test_dockerfile_copies_version_file(self) -> None:
+        dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("COPY VERSION ./", dockerfile)
+
 
 class DataDirectoryDefaultsTests(unittest.TestCase):
     def test_general_settings_use_data_directory_defaults(self) -> None:

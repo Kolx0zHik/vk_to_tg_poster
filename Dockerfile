@@ -20,6 +20,7 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 COPY entrypoint.sh .
+COPY VERSION ./
 COPY src ./src
 COPY config ./config
 COPY static ./static
