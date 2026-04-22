@@ -54,6 +54,7 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - Keep env-var override behavior for VK and Telegram tokens.
 - Keep `config_to_dict` and `save_config_dict` in sync with parser changes.
 - UI validation in `src.web` uses Pydantic models and should remain aligned with dataclass config parsing.
+- Keep `log_retention_days` and other logging-related general settings aligned between `src.config`, `src.web`, and `config/config.example.yaml`.
 
 ### Posting Flow
 
@@ -112,7 +113,13 @@ Take extra care and verify changes when touching:
 - `src.tg_client`: caption limits, HTML escaping, media grouping, rate-limit retry
 - `src.vk_client`: attachment parsing and repost source extraction
 - `src.web`: config validation, avatar refresh, and API-facing schema changes
-- `src.logger`: duplicate handlers, timezone behavior, and log cleanup
+- `src.logger`: duplicate handlers, timezone behavior, log cleanup, and the compact file-log contract
+
+### Logging
+
+- File logs are intentionally compact: prefer summary lines and short error messages over verbose debug output.
+- Avoid writing full tracebacks to the rotating log file in normal operation unless the task explicitly calls for deeper diagnostics.
+- If you change logging behavior, preserve the distinction between compact file logs and more verbose troubleshooting output.
 
 ## Verification Expectations
 
