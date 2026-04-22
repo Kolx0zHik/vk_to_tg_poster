@@ -82,6 +82,14 @@ def _normalize_owner_id(raw_id: str, vk_client: VKClient) -> int | None:
 
 def process_communities(config: Config, vk_client: VKClient, tg_client: TelegramClient, cache: Cache) -> None:
     for community in config.communities:
+        stats = {
+            "fetched": 0,
+            "new": 0,
+            "published": 0,
+            "duplicates": 0,
+            "blocked": 0,
+            "skipped_by_type": 0,
+        }
         if not community.active:
             logger.debug("Сообщество %s выключено, пропускаем", community.name)
             continue
@@ -118,9 +126,11 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
                     break
 
             if not fetched:
-                logger.info("Постов не найдено в %s", community.name)
+                logger.debug("Постов не найдено в %s", community.name)
+                logger.info("Сообщество %s: fetched=0 new=0 published=0 duplicates=0 blocked=0 skipped_by_type=0", community.name)
                 continue
-            logger.info("Получено %s постов из %s", len(fetched), community.name)
+            stats["fetched"] = len(fetched)
+            logger.debug("Получено %s постов из %s", len(fetched), community.name)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Не удалось получить посты для %s: %s", community.name, exc)
             continue
@@ -139,6 +149,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         # ограничиваем максимум за опрос
         if len(filtered) > max_per_poll:
             filtered = filtered[-max_per_poll:]
+        stats["new"] = len(filtered)
 
         if not filtered:
             logger.debug("Новых постов нет в %s", community.name)
@@ -146,19 +157,23 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             # Process oldest first to keep order.
             for post in filtered:
                 if _contains_blocked(post, config.general.blocked_keywords):
-                    logger.info("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
+                    stats["blocked"] += 1
+                    logger.debug("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
                     continue
                 if not _should_publish(post, community.content_types):
+                    stats["skipped_by_type"] += 1
                     continue
                 digest = _dedup_key(post)
                 if cache.is_duplicate(digest):
+                    stats["duplicates"] += 1
                     logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
                     continue
                 try:
                     tg_client.send_post(post, community.content_types)
-                    cache.remember(owner_id, digest)
-                    cache.update_last_seen(owner_id, post.id, getattr(post, "date", None))
-                    logger.info("Опубликован пост %s из %s", post.id, community.name)
+                    cache.remember(owner_id, digest, persist=False)
+                    cache.update_last_seen(owner_id, post.id, getattr(post, "date", None), persist=False)
+                    stats["published"] += 1
+                    logger.debug("Опубликован пост %s из %s", post.id, community.name)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
         # фиксируем базовую точку last_seen, даже если ничего не отправили
@@ -174,4 +189,15 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             elif new_ts == (last_ts or 0) and newest.id > (last_id or 0):
                 should_advance = True
             if should_advance:
-                cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None))
+                cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None), persist=False)
+        cache.flush()
+        logger.info(
+            "Сообщество %s: fetched=%s new=%s published=%s duplicates=%s blocked=%s skipped_by_type=%s",
+            community.name,
+            stats["fetched"],
+            stats["new"],
+            stats["published"],
+            stats["duplicates"],
+            stats["blocked"],
+            stats["skipped_by_type"],
+        )
