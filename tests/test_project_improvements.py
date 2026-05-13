@@ -116,8 +116,9 @@ from src import web
 from src.cache import Cache
 from src.config import Community, Config, ContentTypes, GeneralSettings, TelegramSettings, VKSettings
 from src.logger import configure_logging
-from src.models import Post
+from src.models import Attachment, Post
 from src.pipeline import process_communities
+from src.tg_client import TelegramClient
 from src.version import get_version
 
 
@@ -313,6 +314,39 @@ class CachePersistenceTests(unittest.TestCase):
 
             self.assertEqual(tg_client.sent_posts, [10])
             self.assertEqual(cache.persist_count, 1)
+
+
+class CapturingTelegramClient(TelegramClient):
+    def __init__(self) -> None:
+        super().__init__("token", "@channel")
+        self.calls: list[tuple[str, dict, bool]] = []
+
+    def _post_with_retry(self, method: str, data: dict, json_mode: bool = False) -> None:
+        self.calls.append((method, data, json_mode))
+
+
+class TelegramCaptionTests(unittest.TestCase):
+    def test_single_photo_long_caption_is_truncated_into_one_photo_message(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=7,
+            owner_id=-123,
+            text=" ".join(f"word{i:03d}" for i in range(200)),
+            attachments=[Attachment(type="photo", url="https://example.com/photo.jpg")],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendPhoto"])
+        _, data, _ = client.calls[0]
+        caption = data["caption"]
+        continuation = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
+
+        self.assertLessEqual(len(caption), 1024)
+        self.assertTrue(caption.endswith(continuation))
+        self.assertEqual(data["parse_mode"], "HTML")
+        self.assertIn("reply_markup", data)
+        self.assertRegex(caption.removesuffix(continuation).rsplit(" ", 1)[-1], r"^word\d{3}$")
 
 
 if __name__ == "__main__":

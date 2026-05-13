@@ -11,6 +11,8 @@ from .config import ContentTypes
 from .models import Attachment, Post
 
 logger = logging.getLogger("poster.tg")
+CAPTION_LIMIT = 1024
+CAPTION_CONTINUATION = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
 
 
 def _vk_link_keyboard(url: str) -> str:
@@ -36,6 +38,33 @@ def _build_caption_with_link(text: str, vk_url: str, max_len: int = 1024) -> str
     if len(text_html) + reserve > max_len:
         text_html = text_html[: max_len - reserve - 3] + "..."
     return f"{text_html}\n\n{link_html}"
+
+
+def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
+    text_html = _escape_html(text)
+    if len(text_html) <= max_len:
+        return text_html
+
+    budget = max_len - len(CAPTION_CONTINUATION)
+    if budget <= 0:
+        return CAPTION_CONTINUATION[:max_len]
+
+    low = 0
+    high = len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(_escape_html(text[:mid]).rstrip()) <= budget:
+            low = mid
+        else:
+            high = mid - 1
+
+    prefix = text[:low].rstrip()
+    if low < len(text) and prefix and not text[low : low + 1].isspace():
+        words = prefix.rsplit(None, 1)
+        if len(words) == 2:
+            prefix = words[0]
+
+    return f"{_escape_html(prefix)}{CAPTION_CONTINUATION}"
 
 
 class TelegramClient:
@@ -156,21 +185,14 @@ class TelegramClient:
 
         # Single photo: отправляем фото с caption (если есть текст) и кнопкой.
         if photos and len(photos) == 1:
-            caption = _escape_html(post.text) if (allowed.text and post.text) else None
-            caption_too_long = caption and len(caption) > 1024
-            if caption_too_long:
-                # отправляем без подписи, текст отдельным сообщением
-                self.send_photo(photos[0].url, caption=None, vk_url=vk_url)
-                self.send_text(caption, vk_url=vk_url, parse_mode="HTML")
-                text_used = True
-            else:
-                self.send_photo(
-                    photos[0].url,
-                    caption=caption,
-                    vk_url=vk_url,
-                    parse_mode="HTML" if caption else None,
-                )
-                text_used = bool(caption)
+            caption = _build_photo_caption(post.text) if (allowed.text and post.text) else None
+            self.send_photo(
+                photos[0].url,
+                caption=caption,
+                vk_url=vk_url,
+                parse_mode="HTML" if caption else None,
+            )
+            text_used = bool(caption)
         # Множественные фото: отправляем альбом без caption, затем текст отдельным сообщением с кнопкой.
         elif len(photos) > 1:
             media = [{"type": "photo", "media": photo.url} for photo in photos]
