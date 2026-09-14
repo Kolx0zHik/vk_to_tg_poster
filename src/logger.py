@@ -1,13 +1,56 @@
 import logging
 import os
+import re
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Tuple
 
 from .config import GeneralSettings
 
 
-class CompactFileFormatter(logging.Formatter):
+REDACTED = "<redacted>"
+
+_REDACT_PATTERNS: Tuple[Tuple[re.Pattern, str], ...] = (
+    # URL query parameters: access_token=..., ?oauth=..., &token=..., etc.
+    (re.compile(r"(?i)(access_token=)[^&\s'\"]+"), r"\1" + REDACTED),
+    (re.compile(r"(?i)([?&](?:oauth|token|bot_token|sig|key)=)[^&\s'\"]+"), r"\1" + REDACTED),
+    # VK error payload: [{'key': 'oauth', 'value': '...'}]
+    (
+        re.compile(
+            r"(?i)('key':\s*'(?:access_token|oauth|token|bot_token|sig|key)'\s*,\s*'value':\s*')[^']*(')"
+        ),
+        r"\1" + REDACTED + r"\2",
+    ),
+    (
+        re.compile(
+            r'(?i)("key":\s*"(?:access_token|oauth|token|bot_token|sig|key)"\s*,\s*"value":\s*")[^"]*(")'
+        ),
+        r"\1" + REDACTED + r"\2",
+    ),
+    # Telegram bot token embedded in a URL or a bare "123456:ABC..." value
+    (re.compile(r"(?i)(api\.telegram\.org/bot)[^/\s'\"]+"), r"\1" + REDACTED),
+    (re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b"), REDACTED),
+    # Bare VK access tokens (vk1.a.<...>)
+    (re.compile(r"\bvk1\.[A-Za-z0-9]\.[A-Za-z0-9_-]{10,}"), REDACTED),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Remove tokens and secrets from a log message before it is written or served."""
+    if not text:
+        return text
+    for pattern, replacement in _REDACT_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+class RedactingFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_secrets(super().format(record))
+
+
+class CompactFileFormatter(RedactingFormatter):
     def format(self, record: logging.LogRecord) -> str:
         exc_info = record.exc_info
         exc_text = record.exc_text
@@ -44,7 +87,7 @@ def configure_logging(settings: GeneralSettings) -> logging.Logger:
     console_level = logging.WARNING
     logger.setLevel(min(file_level, console_level))
     logger.propagate = False
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    formatter = RedactingFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     formatter.converter = time.localtime  # логируем в локальном часовом поясе
     file_formatter = CompactFileFormatter("%(asctime)s [%(levelname)s] %(message)s")
     file_formatter.converter = time.localtime

@@ -115,7 +115,7 @@ _install_test_stubs()
 from src import web
 from src.cache import Cache
 from src.config import Community, Config, ContentTypes, GeneralSettings, TelegramSettings, VKSettings
-from src.logger import configure_logging
+from src.logger import configure_logging, redact_secrets
 from src.models import Attachment, Post
 from src.pipeline import process_communities
 from src.tg_client import TelegramClient
@@ -347,6 +347,100 @@ class TelegramCaptionTests(unittest.TestCase):
         self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
         self.assertRegex(caption.removesuffix(continuation).rsplit(" ", 1)[-1], r"^word\d{3}$")
+
+
+class SecretRedactionTests(unittest.TestCase):
+    def test_redact_url_access_token(self) -> None:
+        text = (
+            "url /method/utils.resolveScreenName?screen_name=urenadm"
+            "&access_token=vk1.a.SECRETTOKENVALUE123456&v=5.199"
+        )
+
+        result = redact_secrets(text)
+
+        self.assertNotIn("SECRETTOKENVALUE123456", result)
+        self.assertIn("access_token=<redacted>", result)
+        self.assertIn("v=5.199", result)
+
+    def test_redact_vk_error_payload_param(self) -> None:
+        result = redact_secrets("{'key': 'oauth', 'value': 'secret-oauth-value'}")
+
+        self.assertNotIn("secret-oauth-value", result)
+        self.assertIn("'value': '<redacted>'", result)
+
+    def test_redact_telegram_bot_token_in_url(self) -> None:
+        text = "https://api.telegram.org/bot123456:AAbbCCddEEffGGhhIIjjKKllMMnnOOppQQ/sendMessage"
+
+        result = redact_secrets(text)
+
+        self.assertNotIn("AAbbCCddEEffGGhhIIjjKKllMMnnOOppQQ", result)
+
+    def test_file_log_does_not_contain_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "poster.log"
+            settings = GeneralSettings(log_file=str(log_path), log_level="INFO")
+            logger = configure_logging(settings)
+            for handler in logger.handlers:
+                if not getattr(handler, "baseFilename", None):
+                    handler.setLevel(logging.CRITICAL)
+
+            logger.error(
+                "Failed to resolve VK community id: %s",
+                "HTTPSConnectionPool url /method/utils.resolveScreenName"
+                "?screen_name=x&access_token=vk1.a.SUPERSECRETTOKEN123&v=5.199",
+            )
+            for handler in logger.handlers:
+                flush = getattr(handler, "flush", None)
+                if flush:
+                    flush()
+
+            content = log_path.read_text(encoding="utf-8")
+            self.assertNotIn("SUPERSECRETTOKEN123", content)
+            self.assertIn("<redacted>", content)
+
+    def test_api_logs_redacts_existing_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "poster.log"
+            log_path.write_text(
+                "2026-01-01 00:00:00 [ERROR] url .../x?access_token=vk1.a.OLDSECRETTOKEN99&v=5.199\n",
+                encoding="utf-8",
+            )
+            cfg = Config(
+                general=GeneralSettings(log_file=str(log_path)),
+                vk=VKSettings(),
+                telegram=TelegramSettings(),
+                communities=[],
+            )
+
+            with patch.object(web, "load_config", return_value=cfg):
+                result = asyncio.run(web.get_logs(lines=10))
+
+            joined = "".join(result["lines"])
+            self.assertNotIn("OLDSECRETTOKEN99", joined)
+            self.assertIn("<redacted>", joined)
+
+
+class VKClientErrorSanitizationTests(unittest.TestCase):
+    def test_request_error_does_not_leak_token(self) -> None:
+        import requests
+
+        from src.vk_client import VKClient
+
+        class BoomSession:
+            def get(self, *args, **kwargs):
+                raise requests.ConnectionError(
+                    "HTTPSConnectionPool url /method/wall.get?access_token=vk1.a.TOPSEKRETTOKEN&v=5.199"
+                )
+
+        client = VKClient("vk1.a.TOPSEKRETTOKEN")
+        client.session = BoomSession()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            client._request("wall.get", {"access_token": "vk1.a.TOPSEKRETTOKEN"}, 5)
+
+        message = str(ctx.exception)
+        self.assertNotIn("TOPSEKRETTOKEN", message)
+        self.assertIn("VK request failed (wall.get)", message)
 
 
 if __name__ == "__main__":

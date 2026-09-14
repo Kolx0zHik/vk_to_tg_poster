@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
+from .logger import redact_secrets
 from .version import get_version
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -401,4 +402,4 @@ async def get_logs(lines: int = 200) -> dict:
         return {"lines": [], "path": str(log_path)}
 
     tail = _tail_lines(log_path, lines)
-    return {"lines": tail, "path": str(log_path)}
+    return {"lines": [redact_secrets(line) for line in tail], "path": str(log_path)}

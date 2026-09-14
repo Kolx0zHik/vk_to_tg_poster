@@ -16,6 +16,23 @@ class VKClient:
         self.api_version = api_version
         self.session = requests.Session()
 
+    def _request(self, method: str, params: dict, timeout: int) -> dict:
+        """Perform a VK API call without leaking the token-bearing URL into exceptions."""
+        try:
+            response = self.session.get(
+                f"https://api.vk.com/method/{method}", params=params, timeout=timeout
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"VK request failed ({method}): {type(exc).__name__}") from None
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            raise RuntimeError(f"VK HTTP error ({method}): {response.status_code}") from None
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError(f"VK returned invalid JSON ({method})") from None
+
     def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> List[Post]:
         params = {
             "owner_id": owner_id,
@@ -25,9 +42,7 @@ class VKClient:
             "v": self.api_version,
         }
         logger.debug("Запрос VK wall.get для owner_id=%s", owner_id)
-        response = self.session.get("https://api.vk.com/method/wall.get", params=params, timeout=15)
-        response.raise_for_status()
-        payload = response.json()
+        payload = self._request("wall.get", params, timeout=15)
         if "error" in payload:
             raise RuntimeError(f"VK API error: {payload['error']}")
         items = payload.get("response", {}).get("items", [])
@@ -113,9 +128,7 @@ class VKClient:
             "access_token": self.token,
             "v": self.api_version,
         }
-        resp = self.session.get("https://api.vk.com/method/utils.resolveScreenName", params=params, timeout=10)
-        resp.raise_for_status()
-        payload = resp.json()
+        payload = self._request("utils.resolveScreenName", params, timeout=10)
         if "error" in payload:
             raise RuntimeError(f"VK API error: {payload['error']}")
         resp_obj = payload.get("response") or {}
