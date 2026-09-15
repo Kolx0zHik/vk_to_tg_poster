@@ -13,6 +13,8 @@ from .models import Attachment, Post
 logger = logging.getLogger("poster.tg")
 CAPTION_LIMIT = 1024
 CAPTION_CONTINUATION = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
+DOWNLOAD_TIMEOUT = 30
 
 
 def _vk_link_keyboard(url: str) -> str:
@@ -80,10 +82,12 @@ class TelegramClient:
             self.retry_after = retry_after
             self.payload = payload
 
-    def _post(self, method: str, data: dict, json_mode: bool = False) -> None:
+    def _post(self, method: str, data: dict, json_mode: bool = False, files: dict | None = None) -> None:
         url = f"{self.base_url}/{method}"
         if json_mode:
             resp = self.session.post(url, json=data, timeout=20)
+        elif files:
+            resp = self.session.post(url, data=data, files=files, timeout=60)
         else:
             resp = self.session.post(url, data=data, timeout=20)
         if not resp.ok:
@@ -99,14 +103,28 @@ class TelegramClient:
                 raise self.RateLimitError(retry_after=retry_after, payload=payload)
             raise RuntimeError(f"Telegram API returned error for {method}: {payload}")
 
-    def _post_with_retry(self, method: str, data: dict, json_mode: bool = False) -> None:
+    def _post_with_retry(
+        self, method: str, data: dict, json_mode: bool = False, files: dict | None = None
+    ) -> None:
         try:
-            self._post(method, data, json_mode=json_mode)
+            self._post(method, data, json_mode=json_mode, files=files)
         except self.RateLimitError as exc:
             delay = exc.retry_after or 3
             logger.warning("Ограничение Telegram на %s, повтор через %s с", method, delay)
             time.sleep(delay)
-            self._post(method, data, json_mode=json_mode)
+            self._post(method, data, json_mode=json_mode, files=files)
+
+    def _download_media(self, url: str, max_bytes: int) -> bytes:
+        """Download media locally so it can be uploaded when Telegram cannot fetch it."""
+        try:
+            response = self.session.get(url, timeout=DOWNLOAD_TIMEOUT)
+            response.raise_for_status()
+            content = response.content
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Не удалось скачать медиа: {type(exc).__name__}") from None
+        if len(content) > max_bytes:
+            raise RuntimeError(f"Медиа больше лимита ({len(content)} байт)")
+        return content
 
     def send_text(
         self,
@@ -143,7 +161,13 @@ class TelegramClient:
             data["parse_mode"] = parse_mode
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post_with_retry("sendPhoto", data)
+        try:
+            self._post_with_retry("sendPhoto", data)
+        except RuntimeError:
+            logger.warning("Telegram не смог скачать фото по URL, отправляем файлом")
+            content = self._download_media(photo_url, MAX_PHOTO_BYTES)
+            data.pop("photo", None)
+            self._post_with_retry("sendPhoto", data, files={"photo": ("photo.jpg", content)})
 
     def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
         logger.debug("Отправка видео в Telegram")
@@ -170,7 +194,26 @@ class TelegramClient:
     def send_media_group(self, media: List[dict]) -> None:
         logger.debug("Отправка медиагруппы в Telegram (%s элементов)", len(media))
         data = {"chat_id": self.channel_id, "media": media}
-        self._post_with_retry("sendMediaGroup", data, json_mode=True)
+        try:
+            self._post_with_retry("sendMediaGroup", data, json_mode=True)
+        except RuntimeError:
+            logger.warning("Telegram не смог скачать медиагруппу, отправляем файлами")
+            self._send_media_group_files(media)
+
+    def _send_media_group_files(self, media: List[dict]) -> None:
+        files: dict = {}
+        upload_media: List[dict] = []
+        for index, item in enumerate(media):
+            url = item.get("media", "")
+            content = self._download_media(url, MAX_PHOTO_BYTES)
+            attach = f"file{index}"
+            files[attach] = (f"photo{index}.jpg", content)
+            upload_media.append({"type": item.get("type", "photo"), "media": f"attach://{attach}"})
+        payload = {
+            "chat_id": self.channel_id,
+            "media": json.dumps(upload_media, ensure_ascii=False),
+        }
+        self._post_with_retry("sendMediaGroup", payload, files=files)
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
         vk_url = post.vk_link
