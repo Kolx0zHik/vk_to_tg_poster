@@ -149,19 +149,31 @@
                     <div>
                         <h2>Отслеживаемые группы</h2>
                     </div>
+                    <span class="pill header-pill" id="groupsSummary"></span>
                 </div>
                 <div class="card-body">
-                    <div class="add-group-row">
-                        <input type="text" id="newGroupInput" placeholder="https://vk.ru/public123456 или ID группы">
-                        <button id="addGroupBtn" class="btn btn-primary">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Добавить
-                        </button>
-                    </div>
-
-                    <div class="groups-list" id="groupsList">
-                        <!-- Groups will be added here via JS -->
-                        <div class="empty-state">Список групп пуст</div>
+                    <div class="md">
+                        <div class="md-list">
+                            <div class="md-search">
+                                <input type="text" id="groupSearch" placeholder="Поиск по названию или ID">
+                                <button id="addGroupToggle" class="power" title="Добавить сообщество">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                </button>
+                            </div>
+                            <div class="md-add hidden" id="addGroupForm">
+                                <input type="text" id="newGroupInput" placeholder="https://vk.ru/club123456 или ID">
+                                <div class="md-add-actions">
+                                    <button id="addGroupBtn" class="btn btn-primary btn-sm">Добавить</button>
+                                    <button id="cancelAddGroupBtn" class="btn btn-secondary btn-sm">Отмена</button>
+                                </div>
+                            </div>
+                            <div class="md-items" id="groupsList">
+                                <!-- Groups will be rendered here via JS -->
+                            </div>
+                        </div>
+                        <div class="md-detail" id="groupDetail">
+                            <!-- Selected group settings will be rendered here -->
+                        </div>
                     </div>
                 </div>
             </div>
