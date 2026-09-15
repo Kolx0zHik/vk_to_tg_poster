@@ -31,6 +31,10 @@ document.addEventListener("DOMContentLoaded", () => {
         openLogsBtn: document.getElementById("openLogsBtn"),
         closeLogsBtn: document.getElementById("closeLogsBtn"),
         refreshLogsBtn: document.getElementById("refreshLogsBtn"),
+
+        tokensModal: document.getElementById("tokensModal"),
+        openTokensBtn: document.getElementById("openTokensBtn"),
+        closeTokensBtn: document.getElementById("closeTokensBtn"),
         projectVersion: document.getElementById("projectVersion"),
 
         toast: document.getElementById("toast"),
@@ -416,6 +420,43 @@ document.addEventListener("DOMContentLoaded", () => {
             els.logsModal.setAttribute("aria-hidden", "true");
         }
     }
+
+    function openTokens() {
+        if (els.tokensModal) {
+            els.tokensModal.classList.remove("hidden");
+            els.tokensModal.setAttribute("aria-hidden", "false");
+        }
+    }
+
+    function closeTokens() {
+        if (els.tokensModal) {
+            els.tokensModal.classList.add("hidden");
+            els.tokensModal.setAttribute("aria-hidden", "true");
+        }
+    }
+
+    if (els.openTokensBtn) {
+        els.openTokensBtn.addEventListener("click", () => openTokens());
+    }
+
+    if (els.closeTokensBtn) {
+        els.closeTokensBtn.addEventListener("click", () => closeTokens());
+    }
+
+    if (els.tokensModal) {
+        els.tokensModal.addEventListener("click", (e) => {
+            if (e.target === els.tokensModal) {
+                closeTokens();
+            }
+        });
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            closeLogs();
+            closeTokens();
+        }
+    });
 
     if (els.openLogsBtn) {
         els.openLogsBtn.addEventListener("click", () => openLogs());

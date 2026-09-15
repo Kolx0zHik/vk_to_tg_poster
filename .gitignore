@@ -7,3 +7,4 @@ data/avatars.json
 logs/
 *.log
 *.pyc
+.playwright-mcp/

@@ -25,6 +25,14 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button id="openTokensBtn" class="btn btn-secondary">
+                    <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                    </svg>
+                    Токены
+                </button>
                 <button id="openLogsBtn" class="btn btn-secondary">
                     <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
                          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -52,7 +60,6 @@
                     </div>
                 </div>
                 <div class="card-body">
-                    <div class="separator"></div>
                     <div class="form-group">
                         <span class="label-text">
                             Интервал проверки (минуты)
@@ -68,7 +75,6 @@
                             </select>
                         </div>
                     </div>
-                    <div class="separator"></div>
 
                     <div class="form-group hidden" id="cronCustomRow">
                         <label for="cronCustom">Кастомный cron</label>
@@ -85,7 +91,6 @@
                             <span class="slider"></span>
                         </label>
                     </div>
-                    <div class="separator"></div>
 
                     <div class="form-group">
                         <span class="label-text">
@@ -97,7 +102,6 @@
                             <span class="suffix">постов</span>
                         </div>
                     </div>
-                    <div class="separator"></div>
 
                     <div class="form-group">
                         <span class="label-text">
@@ -115,18 +119,17 @@
                             </select>
                         </div>
                     </div>
-                    <div class="separator"></div>
 
-                    <label class="switch-label">
-                        <span class="label-text">
-                            Фильтр по словам
-                            <small>Применять стоп-слова к постам (каждое с новой строки)</small>
-                        </span>
-                        <input type="checkbox" id="filterKeywords" checked>
-                        <span class="slider"></span>
-                    </label>
-                    <div class="form-group">
-                        <textarea id="blockedKeywords" rows="4" placeholder="реклама&#10;спам"></textarea>
+                    <div class="switch-group">
+                        <label class="switch-label">
+                            <span class="label-text">
+                                Фильтр по словам
+                                <small>Применять стоп-слова к постам</small>
+                            </span>
+                            <input type="checkbox" id="filterKeywords" checked>
+                            <span class="slider"></span>
+                        </label>
+                        <textarea id="blockedKeywords" rows="3" placeholder="реклама&#10;спам"></textarea>
                     </div>
                 </div>
                 <div class="card-footer">
@@ -137,66 +140,8 @@
                 </div>
             </div>
 
-            <!-- Tokens Card -->
+            <!-- Groups Card -->
             <div class="card">
-                <div class="card-header">
-                    <div class="card-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-                    </div>
-                    <div>
-                        <h2>Токены доступа</h2>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div class="separator"></div>
-                    <div class="form-group">
-                        <span class="label-text">
-                            VK API Token
-                            <small>Токен сервиса VK, можно оставить пустым если в env.</small>
-                        </span>
-                        <div class="password-input">
-                            <input type="password" id="vkToken" placeholder="vk1.a.sw3...">
-                            <button type="button" class="toggle-password" data-target="vkToken">
-                                <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                                <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="separator"></div>
-
-                    <div class="form-group">
-                        <span class="label-text">
-                            Telegram Bot Token
-                            <small>Токен бота, можно оставить пустым если в env.</small>
-                        </span>
-                        <div class="password-input">
-                            <input type="password" id="tgBotToken" placeholder="123456:ABC...">
-                            <button type="button" class="toggle-password" data-target="tgBotToken">
-                                <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                                <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="separator"></div>
-
-                    <div class="form-group">
-                        <span class="label-text">
-                            Telegram канал
-                            <small>@канал или ID чата.</small>
-                        </span>
-                        <input type="text" id="tgChannel" placeholder="@my_channel или -100...">
-                    </div>
-                </div>
-                <div class="card-footer">
-                    <button id="saveTokensBtn" class="btn btn-primary">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                        Сохранить
-                    </button>
-                </div>
-            </div>
-
-            <!-- Groups Section -->
-            <div class="card full-width">
                 <div class="card-header">
                     <div class="card-icon">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -207,7 +152,7 @@
                 </div>
                 <div class="card-body">
                     <div class="add-group-row">
-                        <input type="text" id="newGroupInput" placeholder="https://vk.com/public123456 или ID группы">
+                        <input type="text" id="newGroupInput" placeholder="https://vk.ru/public123456 или ID группы">
                         <button id="addGroupBtn" class="btn btn-primary">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             Добавить
@@ -222,6 +167,59 @@
             </div>
 
         </main>
+    </div>
+
+    <!-- Tokens Modal -->
+    <div id="tokensModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h3>Токены доступа</h3>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <span class="label-text">
+                        VK API Token
+                        <small>Токен сервиса VK, можно оставить пустым если в env.</small>
+                    </span>
+                    <div class="password-input">
+                        <input type="password" id="vkToken" placeholder="vk1.a.sw3...">
+                        <button type="button" class="toggle-password" data-target="vkToken">
+                            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <span class="label-text">
+                        Telegram Bot Token
+                        <small>Токен бота, можно оставить пустым если в env.</small>
+                    </span>
+                    <div class="password-input">
+                        <input type="password" id="tgBotToken" placeholder="123456:ABC...">
+                        <button type="button" class="toggle-password" data-target="tgBotToken">
+                            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                            <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <span class="label-text">
+                        Telegram канал
+                        <small>@канал или ID чата.</small>
+                    </span>
+                    <input type="text" id="tgChannel" placeholder="@my_channel или -100...">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="closeTokensBtn" class="btn btn-secondary">Закрыть</button>
+                <button id="saveTokensBtn" class="btn btn-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Сохранить
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Logs Modal -->
@@ -239,6 +237,8 @@
             </div>
         </div>
     </div>
+
+    <div id="toast" class="toast hidden"><span id="toastMessage"></span></div>
 
     <script src="/static/script.js"></script>
 </body>
