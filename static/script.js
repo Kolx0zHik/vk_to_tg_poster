@@ -6,6 +6,8 @@ document.addEventListener("DOMContentLoaded", () => {
         selected: 0,
         query: "",
         addScope: "none",
+        addAmount: 0,
+        addTypes: {},
     };
 
     const els = {
@@ -30,10 +32,8 @@ document.addEventListener("DOMContentLoaded", () => {
         addGroupToggle: document.getElementById("addGroupToggle"),
         addGroupModal: document.getElementById("addGroupModal"),
         addGroupScope: document.getElementById("addGroupScope"),
-        addGroupAmountRow: document.getElementById("addGroupAmountRow"),
-        addGroupAmount: document.getElementById("addGroupAmount"),
-        addGroupAmountLabel: document.getElementById("addGroupAmountLabel"),
-        addGroupAmountSuffix: document.getElementById("addGroupAmountSuffix"),
+        addGroupAmountChips: document.getElementById("addGroupAmountChips"),
+        addGroupTypes: document.getElementById("addGroupTypes"),
         addGroupPreview: document.getElementById("addGroupPreview"),
         cancelAddGroupBtn: document.getElementById("cancelAddGroupBtn"),
         groupSearch: document.getElementById("groupSearch"),
@@ -251,16 +251,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     ).join("")}
                 </div>
             </div>
-            <div class="md-block">
-                <label>Название</label>
-                <input type="text" data-field="name" placeholder="Имя сообщества">
-            </div>
             <div class="md-detail-foot">
                 <span class="pill">Изменения сохранит кнопка «Сохранить»</span>
                 <button type="button" class="link-danger" data-action="remove">${svgIcon(ICONS.trash)}Удалить сообщество</button>
             </div>
         `;
-        els.groupDetail.querySelector('[data-field="name"]').value = group.name || "";
         applyAvatar(els.groupDetail.querySelector("[data-avatar-detail]"), group);
     }
 
@@ -438,6 +433,24 @@ document.addEventListener("DOMContentLoaded", () => {
         return res.json();
     }
 
+    const DEFAULT_TYPES = {
+        text: true,
+        photo: true,
+        video: true,
+        audio: false,
+        link: true,
+    };
+
+    const AMOUNT_PRESETS = {
+        posts: [3, 7, 10, 20, 50],
+        days: [1, 2, 3, 5, 7],
+    };
+
+    const DEFAULT_AMOUNT = {
+        posts: 10,
+        days: 3,
+    };
+
     function openAddGroup() {
         if (!els.addGroupModal) return;
         resetAddGroupForm();
@@ -458,7 +471,19 @@ document.addEventListener("DOMContentLoaded", () => {
             els.addGroupPreview.classList.add("hidden");
             els.addGroupPreview.innerHTML = "";
         }
+        state.addTypes = { ...DEFAULT_TYPES };
         setAddScope("none");
+        renderAddTypes();
+    }
+
+    function renderAddTypes() {
+        if (!els.addGroupTypes) return;
+        els.addGroupTypes.innerHTML = TYPE_META.map(
+            (type) => `
+            <button type="button" class="tg${state.addTypes[type.key] ? " on" : ""}" data-add-type="${type.key}">
+                ${svgIcon(type.icon)}${type.label}
+            </button>`,
+        ).join("");
     }
 
     function setAddScope(scope) {
@@ -468,30 +493,30 @@ document.addEventListener("DOMContentLoaded", () => {
                 btn.classList.toggle("on", btn.dataset.scope === scope);
             });
         }
-        const row = els.addGroupAmountRow;
-        if (!row) return;
-        if (scope === "none") {
-            row.classList.add("hidden");
+        const chips = els.addGroupAmountChips;
+        if (!chips) return;
+        const presets = AMOUNT_PRESETS[scope];
+        if (!presets) {
+            chips.classList.add("hidden");
+            chips.innerHTML = "";
             return;
         }
-        row.classList.remove("hidden");
-        if (scope === "posts") {
-            els.addGroupAmountLabel.textContent = "Сколько последних постов";
-            els.addGroupAmountSuffix.textContent = "постов";
-            els.addGroupAmount.max = "100";
-            els.addGroupAmount.value = "10";
-        } else {
-            els.addGroupAmountLabel.textContent = "За сколько последних дней";
-            els.addGroupAmountSuffix.textContent = "дней";
-            els.addGroupAmount.max = "365";
-            els.addGroupAmount.value = "7";
+        if (!presets.includes(state.addAmount)) {
+            state.addAmount = DEFAULT_AMOUNT[scope];
         }
+        chips.classList.remove("hidden");
+        chips.innerHTML = presets
+            .map(
+                (amount) => `
+                <button type="button" data-amount="${amount}" class="${amount === state.addAmount ? "on" : ""}">${amount}</button>`,
+            )
+            .join("");
     }
 
     function addScopeValue() {
-        const raw = parseInt(els.addGroupAmount.value, 10) || 0;
-        if (state.addScope === "posts") return Math.max(1, Math.min(100, raw));
-        if (state.addScope === "days") return Math.max(1, Math.min(365, raw));
+        if (state.addScope === "posts" || state.addScope === "days") {
+            return state.addAmount;
+        }
         return 0;
     }
 
@@ -561,13 +586,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 name: info?.name || raw,
                 active: true,
                 icon: info?.photo || "",
-                content_types: {
-                    text: true,
-                    photo: true,
-                    video: true,
-                    audio: false,
-                    link: true,
-                },
+                content_types: { ...state.addTypes },
             };
             state.communities.push(group);
             state.selected = state.communities.length - 1;
@@ -668,6 +687,27 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (els.addGroupAmountChips) {
+        els.addGroupAmountChips.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-amount]");
+            if (!btn) return;
+            state.addAmount = parseInt(btn.dataset.amount, 10);
+            els.addGroupAmountChips.querySelectorAll("[data-amount]").forEach((chip) => {
+                chip.classList.toggle("on", chip === btn);
+            });
+        });
+    }
+
+    if (els.addGroupTypes) {
+        els.addGroupTypes.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-add-type]");
+            if (!btn) return;
+            const key = btn.dataset.addType;
+            state.addTypes[key] = !state.addTypes[key];
+            btn.classList.toggle("on", state.addTypes[key]);
+        });
+    }
+
     if (els.newGroupInput) {
         els.newGroupInput.addEventListener("input", scheduleAddPreview);
     }
@@ -731,14 +771,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if (removeBtn) {
             removeGroup();
         }
-    });
-
-    els.groupDetail.addEventListener("input", (e) => {
-        const field = e.target.getAttribute("data-field");
-        if (!field) return;
-        const value = e.target.value;
-        updateSelected((item) => ({ ...item, [field]: value }));
-        renderList();
     });
 
     function openLogs() {
