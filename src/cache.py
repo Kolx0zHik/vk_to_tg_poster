@@ -162,6 +162,16 @@ class Cache:
             return None
         return int(entry.get("baseline_date", 0) or 0), int(entry.get("baseline_post_id", 0) or 0)
 
+    def set_baseline(self, owner_id: int, baseline_date: int, baseline_post_id: int, persist: bool = True) -> None:
+        """Move the community baseline (used for backfill and "only new" resumes)."""
+        self._store.setdefault("communities", {})[str(owner_id)] = {
+            "baseline_date": int(baseline_date or 0),
+            "baseline_post_id": int(baseline_post_id or 0),
+        }
+        self._dirty = True
+        if persist:
+            self._persist()
+
     def is_known(self, owner_id: int, post: Post) -> bool:
         if post.dedup_key in self._store.get("posts", {}):
             return True

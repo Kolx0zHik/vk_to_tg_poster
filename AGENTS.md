@@ -73,6 +73,8 @@ Important invariants:
 - Dedup uses original repost source ids when available via `copy_history`.
 - `last_seen` advances even when a post is skipped as duplicate, to avoid replay loops.
 - Missing tokens/channel should not crash the scheduler; the run is skipped with a warning.
+- Per-community `baseline` in the cache doubles as the backfill boundary: posts above it are published, posts at or below it are marked skipped.
+- The web UI writes backfill/pause-request state to `data/backfill.json` (next to `cache_file`); the scheduler consumes it into a cache baseline on the next run. A failed VK fetch keeps the request for the following run instead of dropping it.
 
 ### Telegram Behavior
 

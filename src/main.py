@@ -6,6 +6,7 @@ from datetime import datetime
 
 from croniter import croniter
 
+from .backfill import BackfillRequests, requests_path_for
 from .cache import Cache
 from .config import ConfigError, load_config
 from .logger import configure_logging
@@ -23,7 +24,13 @@ def run_job(config_path: str, logger) -> None:
     cache = Cache(config.general.cache_file)
     vk_client = VKClient(config.vk.token, api_version=config.general.vk_api_version)
     tg_client = TelegramClient(config.telegram.bot_token, config.telegram.channel_id)
-    process_communities(config, vk_client, tg_client, cache)
+    process_communities(
+        config,
+        vk_client,
+        tg_client,
+        cache,
+        BackfillRequests(requests_path_for(config.general.cache_file)),
+    )
     logger.info("Запуск завершён.")
 
 
@@ -51,6 +58,7 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
                     VKClient(cfg.vk.token, cfg.general.vk_api_version),
                     TelegramClient(cfg.telegram.bot_token, cfg.telegram.channel_id),
                     Cache(cfg.general.cache_file),
+                    BackfillRequests(requests_path_for(cfg.general.cache_file)),
                 )
             # refresh cron from file for next iteration
             try:

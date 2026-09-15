@@ -160,13 +160,6 @@
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 </button>
                             </div>
-                            <div class="md-add hidden" id="addGroupForm">
-                                <input type="text" id="newGroupInput" placeholder="Ссылка на сообщество в VK или название">
-                                <div class="md-add-actions">
-                                    <button id="addGroupBtn" class="btn btn-primary btn-sm">Добавить</button>
-                                    <button id="cancelAddGroupBtn" class="btn btn-secondary btn-sm">Отмена</button>
-                                </div>
-                            </div>
                             <div class="md-items" id="groupsList">
                                 <!-- Groups will be rendered here via JS -->
                             </div>
@@ -179,6 +172,47 @@
             </div>
 
         </main>
+    </div>
+
+    <!-- Add Group Modal -->
+    <div id="addGroupModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h3>Добавить сообщество</h3>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <span class="label-text">
+                        Ссылка на сообщество
+                        <small>Например https://vk.com/club123456 или короткое имя</small>
+                    </span>
+                    <input type="text" id="newGroupInput" placeholder="https://vk.com/...">
+                    <div class="group-preview hidden" id="addGroupPreview"></div>
+                </div>
+                <div class="form-group">
+                    <span class="label-text">
+                        Что взять из сообщества
+                        <small>С какого момента начинать публикацию</small>
+                    </span>
+                    <div class="seg" id="addGroupScope">
+                        <button type="button" data-scope="none" class="on">Только новые</button>
+                        <button type="button" data-scope="posts">Последние посты</button>
+                        <button type="button" data-scope="days">За последние дни</button>
+                    </div>
+                </div>
+                <div class="form-group hidden" id="addGroupAmountRow">
+                    <span class="label-text" id="addGroupAmountLabel">Сколько</span>
+                    <div class="input-with-suffix">
+                        <input type="number" id="addGroupAmount" value="10" min="1" max="100">
+                        <span class="suffix" id="addGroupAmountSuffix">постов</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelAddGroupBtn" class="btn btn-secondary">Отмена</button>
+                <button id="addGroupBtn" class="btn btn-primary">Добавить</button>
+            </div>
+        </div>
     </div>
 
     <!-- Tokens Modal -->

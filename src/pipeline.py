@@ -1,6 +1,8 @@
 import logging
+import time
 from typing import List
 
+from .backfill import MAX_BACKFILL_POSTS, BackfillRequests, compute_baseline, normalize_mode
 from .cache import Cache
 from .config import Config, ContentTypes
 from .models import Post
@@ -12,6 +14,7 @@ from .vk_ids import normalize_community_key, parse_owner_id
 logger = logging.getLogger("poster.pipeline")
 
 MAX_FETCH_PAGES = 5
+BACKFILL_PAGE_SIZE = 100
 
 
 def _should_publish(post: Post, allowed: ContentTypes) -> bool:
@@ -129,7 +132,100 @@ def _publish_pending(
             logger.debug("Опубликован пост %s из %s", post.id, community.name)
 
 
-def process_communities(config: Config, vk_client: VKClient, tg_client: TelegramClient, cache: Cache) -> None:
+def _fetch_for_backfill(vk_client: VKClient, owner_id: int, mode: str, value: int, now: float) -> List[Post]:
+    """Fetch just enough posts to compute the requested starting baseline."""
+    posts: List[Post] = []
+
+    if mode == "none":
+        return vk_client.fetch_posts(owner_id, count=1, offset=0)
+
+    if mode == "posts":
+        target = min(MAX_BACKFILL_POSTS, max(1, value) + 1)
+        offset = 0
+        while len(posts) < target:
+            batch = vk_client.fetch_posts(
+                owner_id,
+                count=min(BACKFILL_PAGE_SIZE, target - len(posts)),
+                offset=offset,
+            )
+            if not batch:
+                break
+            posts.extend(batch)
+            if len(batch) < BACKFILL_PAGE_SIZE:
+                break
+            offset += len(batch)
+        return posts
+
+    cutoff = int(now - max(1, value) * 86400)
+    offset = 0
+    while len(posts) < MAX_BACKFILL_POSTS:
+        batch = vk_client.fetch_posts(owner_id, count=BACKFILL_PAGE_SIZE, offset=offset)
+        if not batch:
+            break
+        posts.extend(batch)
+        if any(int(post.date or 0) < cutoff for post in batch):
+            break
+        if len(batch) < BACKFILL_PAGE_SIZE:
+            break
+        offset += len(batch)
+    return posts
+
+
+def _apply_backfill(
+    community,
+    owner_id: int,
+    vk_client: VKClient,
+    cache: Cache,
+    requests: BackfillRequests | None,
+    stats: dict,
+) -> None:
+    """Turn a pending backfill request into a cache baseline for this community."""
+    if requests is None:
+        return
+
+    request_key = None
+    entry = None
+    for key in (str(owner_id), normalize_community_key(community.id)):
+        if not key:
+            continue
+        entry = requests.get(key)
+        if entry:
+            request_key = key
+            break
+    if not entry or request_key is None:
+        return
+
+    mode = normalize_mode(entry.get("mode"))
+    value = int(entry.get("value") or 0)
+    now = time.time()
+    try:
+        posts = _fetch_for_backfill(vk_client, owner_id, mode, value, now)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Не удалось получить посты для дозаливки %s: %s", community.name, exc)
+        return
+
+    baseline = compute_baseline(posts, mode, value, now) or (0, 0)
+    cache.set_baseline(owner_id, baseline[0], baseline[1])
+    requests.pop(request_key)
+    stats["backfill"] = len(posts)
+    logger.info(
+        "Дозаливка %s: режим=%s значение=%s получено=%s база=(%s,%s)",
+        community.name,
+        mode,
+        value,
+        len(posts),
+        baseline[0],
+        baseline[1],
+    )
+
+
+def process_communities(
+    config: Config,
+    vk_client: VKClient,
+    tg_client: TelegramClient,
+    cache: Cache,
+    backfill: BackfillRequests | None = None,
+) -> None:
     for community in config.communities:
         stats = {
             "fetched": 0,
@@ -139,6 +235,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             "blocked": 0,
             "skipped_by_type": 0,
             "failed": 0,
+            "backfill": 0,
         }
         if not community.active:
             logger.info("Сообщество %s на паузе, пропускаем", community.name)
@@ -148,6 +245,8 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         if owner_id is None:
             logger.warning("Не удалось определить ID сообщества '%s', пропускаем", community.id)
             continue
+
+        _apply_backfill(community, owner_id, vk_client, cache, backfill, stats)
 
         max_per_poll = max(1, int(config.general.posts_limit))
         page_size = min(10, max_per_poll)
@@ -165,7 +264,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
         pending_left = len(cache.pending_posts(owner_id))
         logger.info(
             "Сообщество %s: fetched=%s new=%s published=%s known=%s blocked=%s "
-            "skipped_by_type=%s failed=%s pending=%s",
+            "skipped_by_type=%s failed=%s pending=%s backfill=%s",
             community.name,
             stats["fetched"],
             stats["new"],
@@ -175,4 +274,5 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             stats["skipped_by_type"],
             stats["failed"],
             pending_left,
+            stats["backfill"],
         )

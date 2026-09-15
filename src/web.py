@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
+from .backfill import BackfillRequests, requests_path_for
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
 from .logger import redact_secrets
 from .version import get_version
@@ -257,6 +258,16 @@ def _cleanup_cache(config_dict: dict) -> None:
     return
 
 
+def _backfill_store() -> BackfillRequests:
+    cache_file = "data/cache.json"
+    try:
+        config_dict = _load_ui_config()
+        cache_file = (config_dict.get("general") or {}).get("cache_file") or cache_file
+    except Exception:
+        pass
+    return BackfillRequests(requests_path_for(cache_file))
+
+
 def _tail_lines(path: Path, lines: int) -> list[str]:
     if lines <= 0:
         return []
@@ -377,6 +388,40 @@ async def community_info(value: str) -> dict:
     }
     _save_avatar_cache(cache)
     return {"id": info.get("id") or value, "name": info.get("name") or "", "photo": info.get("photo")}
+
+class BackfillModel(BaseModel):
+    id: str
+    mode: str = "none"
+    value: int = 0
+
+
+@app.post("/api/backfill")
+async def set_backfill(payload: BackfillModel) -> dict:
+    community_id = _normalize_owner_id(payload.id)
+    if not community_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Не указано сообщество", "field": "id"},
+        )
+
+    mode = (payload.mode or "none").strip().lower()
+    if mode not in {"none", "posts", "days"}:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Неизвестный режим дозаливки", "field": "mode"},
+        )
+
+    raw_value = int(payload.value or 0)
+    if mode == "posts":
+        value = max(1, min(100, raw_value))
+    elif mode == "days":
+        value = max(1, min(365, raw_value))
+    else:
+        value = 0
+
+    _backfill_store().request(community_id, mode, value)
+    return {"ok": True, "id": community_id, "mode": mode, "value": value}
+
 
 @app.get("/api/logs")
 async def get_logs(lines: int = 200) -> dict:

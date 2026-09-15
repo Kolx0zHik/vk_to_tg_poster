@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 data/cache.json
 data/avatars.json
+data/backfill.json
+data/backfill.json.tmp
 logs/
 *.log
 *.pyc

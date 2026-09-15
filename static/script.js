@@ -5,6 +5,7 @@ document.addEventListener("DOMContentLoaded", () => {
         avatarCache: {},
         selected: 0,
         query: "",
+        addScope: "none",
     };
 
     const els = {
@@ -27,7 +28,13 @@ document.addEventListener("DOMContentLoaded", () => {
         newGroupInput: document.getElementById("newGroupInput"),
         addGroupBtn: document.getElementById("addGroupBtn"),
         addGroupToggle: document.getElementById("addGroupToggle"),
-        addGroupForm: document.getElementById("addGroupForm"),
+        addGroupModal: document.getElementById("addGroupModal"),
+        addGroupScope: document.getElementById("addGroupScope"),
+        addGroupAmountRow: document.getElementById("addGroupAmountRow"),
+        addGroupAmount: document.getElementById("addGroupAmount"),
+        addGroupAmountLabel: document.getElementById("addGroupAmountLabel"),
+        addGroupAmountSuffix: document.getElementById("addGroupAmountSuffix"),
+        addGroupPreview: document.getElementById("addGroupPreview"),
         cancelAddGroupBtn: document.getElementById("cancelAddGroupBtn"),
         groupSearch: document.getElementById("groupSearch"),
         groupsList: document.getElementById("groupsList"),
@@ -196,19 +203,14 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         els.groupsList.innerHTML = items
-            .map(({ group, index }) => {
-                const url = vkCommunityUrl(group.id);
-                const name = escapeHtml(group.name || group.id || "Без названия");
-                const label = url
-                    ? `<a class="name" href="${escapeHtml(url)}" target="_blank" rel="noopener">${name}<span class="ext">${svgIcon(ICONS.external)}</span></a>`
-                    : `<span class="name">${name}</span>`;
-                return `
+            .map(
+                ({ group, index }) => `
                 <div class="md-item${index === state.selected ? " sel" : ""}${group.active ? "" : " paused"}" data-index="${index}">
                     <div class="avatar sm" data-avatar="${index}">${escapeHtml(initials(group))}<span class="dot${group.active ? "" : " paused"}"></span></div>
-                    <div class="md-item-text">${label}</div>
+                    <div class="md-item-text"><div class="name">${escapeHtml(group.name || group.id || "Без названия")}</div></div>
                 </div>
-            `;
-            })
+            `,
+            )
             .join("");
         items.forEach(({ group, index }) => {
             applyAvatar(els.groupsList.querySelector(`[data-avatar="${index}"]`), group);
@@ -253,27 +255,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 <label>Название</label>
                 <input type="text" data-field="name" placeholder="Имя сообщества">
             </div>
-            <div class="md-block">
-                <label>Сообщество в VK</label>
-                <div class="ref-view">
-                    ${
-                        url
-                            ? `<a class="linkish" href="${escapeHtml(url)}" target="_blank" rel="noopener">${svgIcon(ICONS.external)}Открыть в VK</a>`
-                            : '<span class="hint">Ссылка недоступна</span>'
-                    }
-                    <button type="button" class="link-muted" data-action="edit-ref">Изменить</button>
-                </div>
-                <div class="ref-edit hidden">
-                    <input type="text" data-field="id" placeholder="Ссылка на сообщество или название">
-                </div>
-            </div>
             <div class="md-detail-foot">
                 <span class="pill">Изменения сохранит кнопка «Сохранить»</span>
                 <button type="button" class="link-danger" data-action="remove">${svgIcon(ICONS.trash)}Удалить сообщество</button>
             </div>
         `;
         els.groupDetail.querySelector('[data-field="name"]').value = group.name || "";
-        els.groupDetail.querySelector('[data-field="id"]').value = group.id || "";
         applyAvatar(els.groupDetail.querySelector("[data-avatar-detail]"), group);
     }
 
@@ -302,6 +289,21 @@ document.addEventListener("DOMContentLoaded", () => {
         state.communities = state.communities.filter((_, idx) => idx !== state.selected);
         renderGroups();
         showToast("Сообщество удалено");
+    }
+
+    async function handleStatusChange(active, wasActive) {
+        const group = state.communities[state.selected];
+        if (!group) return;
+        const saved = await persistConfig();
+        if (!saved) return;
+        if (!active) {
+            showToast("Сообщество на паузе");
+            return;
+        }
+        if (!wasActive) {
+            await postBackfill(group.id, "none", 0);
+            showToast("Продолжаем с текущего места: только новые посты");
+        }
     }
 
     function collectPayload() {
@@ -354,7 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 
-    async function saveConfig() {
+    async function persistConfig() {
         const payload = collectPayload();
         try {
             const res = await fetch("/api/config", {
@@ -364,15 +366,23 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             if (!res.ok) {
                 const detail = await res.json().catch(() => ({}));
-                const message = detail?.detail?.message || "Ошибка сохранения";
-                showToast(message, true);
-                return;
+                showToast(detail?.detail?.message || "Ошибка сохранения", true);
+                return false;
             }
-            showToast("Конфиг сохранён");
-            await loadConfig();
+            return true;
         } catch (err) {
             showToast("Не удалось сохранить конфиг", true);
+            return false;
         }
+    }
+
+    async function saveConfig() {
+        const saved = await persistConfig();
+        if (!saved) {
+            return;
+        }
+        showToast("Конфиг сохранён");
+        await loadConfig();
     }
 
     async function loadConfig() {
@@ -429,19 +439,115 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function openAddGroup() {
-        if (!els.addGroupForm) return;
-        els.addGroupForm.classList.remove("hidden");
+        if (!els.addGroupModal) return;
+        resetAddGroupForm();
+        els.addGroupModal.classList.remove("hidden");
+        els.addGroupModal.setAttribute("aria-hidden", "false");
         els.newGroupInput.focus();
     }
 
     function closeAddGroup() {
-        if (!els.addGroupForm) return;
-        els.addGroupForm.classList.add("hidden");
+        if (!els.addGroupModal) return;
+        els.addGroupModal.classList.add("hidden");
+        els.addGroupModal.setAttribute("aria-hidden", "true");
+    }
+
+    function resetAddGroupForm() {
+        if (els.newGroupInput) els.newGroupInput.value = "";
+        if (els.addGroupPreview) {
+            els.addGroupPreview.classList.add("hidden");
+            els.addGroupPreview.innerHTML = "";
+        }
+        setAddScope("none");
+    }
+
+    function setAddScope(scope) {
+        state.addScope = scope;
+        if (els.addGroupScope) {
+            els.addGroupScope.querySelectorAll("[data-scope]").forEach((btn) => {
+                btn.classList.toggle("on", btn.dataset.scope === scope);
+            });
+        }
+        const row = els.addGroupAmountRow;
+        if (!row) return;
+        if (scope === "none") {
+            row.classList.add("hidden");
+            return;
+        }
+        row.classList.remove("hidden");
+        if (scope === "posts") {
+            els.addGroupAmountLabel.textContent = "Сколько последних постов";
+            els.addGroupAmountSuffix.textContent = "постов";
+            els.addGroupAmount.max = "100";
+            els.addGroupAmount.value = "10";
+        } else {
+            els.addGroupAmountLabel.textContent = "За сколько последних дней";
+            els.addGroupAmountSuffix.textContent = "дней";
+            els.addGroupAmount.max = "365";
+            els.addGroupAmount.value = "7";
+        }
+    }
+
+    function addScopeValue() {
+        const raw = parseInt(els.addGroupAmount.value, 10) || 0;
+        if (state.addScope === "posts") return Math.max(1, Math.min(100, raw));
+        if (state.addScope === "days") return Math.max(1, Math.min(365, raw));
+        return 0;
+    }
+
+    let previewTimer = null;
+
+    function scheduleAddPreview() {
+        if (previewTimer) clearTimeout(previewTimer);
+        previewTimer = setTimeout(previewAddGroup, 400);
+    }
+
+    async function previewAddGroup() {
+        if (!els.addGroupPreview) return;
+        const raw = els.newGroupInput.value.trim();
+        if (!raw) {
+            els.addGroupPreview.classList.add("hidden");
+            els.addGroupPreview.innerHTML = "";
+            return;
+        }
+        els.addGroupPreview.classList.remove("hidden");
+        els.addGroupPreview.innerHTML = '<span class="hint">Проверяем ссылку…</span>';
+        try {
+            const info = await fetchCommunityInfo(raw);
+            const name = info?.name || raw;
+            const photo = info?.photo ? `<img src="${escapeHtml(info.photo)}" alt="">` : "";
+            const note = info?.name ? "сообщество найдено в VK" : "не удалось проверить — добавим как есть";
+            els.addGroupPreview.innerHTML = `
+                <div class="avatar sm">${photo}${escapeHtml(name.slice(0, 2).toUpperCase())}</div>
+                <div class="md-item-text">
+                    <div class="name">${escapeHtml(name)}</div>
+                    <div class="hint">${note}</div>
+                </div>
+            `;
+        } catch {
+            els.addGroupPreview.innerHTML = '<span class="hint">Не удалось проверить ссылку — добавим как есть</span>';
+        }
+    }
+
+    async function postBackfill(id, mode, value) {
+        try {
+            const res = await fetch("/api/backfill", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, mode, value }),
+            });
+            return res.ok;
+        } catch {
+            return false;
+        }
     }
 
     async function addGroup() {
         const raw = els.newGroupInput.value.trim();
-        if (!raw) return;
+        if (!raw) {
+            showToast("Укажите ссылку на сообщество", true);
+            return;
+        }
         els.addGroupBtn.disabled = true;
         try {
             let info = null;
@@ -450,7 +556,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch {
                 info = null;
             }
-            state.communities.push({
+            const group = {
                 id: info?.id || raw,
                 name: info?.name || raw,
                 active: true,
@@ -462,16 +568,24 @@ document.addEventListener("DOMContentLoaded", () => {
                     audio: false,
                     link: true,
                 },
-            });
+            };
+            state.communities.push(group);
             state.selected = state.communities.length - 1;
             state.query = "";
             if (els.groupSearch) {
                 els.groupSearch.value = "";
             }
-            els.newGroupInput.value = "";
+
+            const scope = state.addScope;
+            const amount = addScopeValue();
+            const saved = await persistConfig();
+            if (saved) {
+                await postBackfill(group.id, scope, amount);
+            }
+
             closeAddGroup();
             renderGroups();
-            showToast("Сообщество добавлено");
+            showToast(saved ? "Сообщество добавлено" : "Сообщество добавлено, но конфиг не сохранён", !saved);
         } finally {
             els.addGroupBtn.disabled = false;
         }
@@ -542,20 +656,32 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     if (els.addGroupToggle) {
-        els.addGroupToggle.addEventListener("click", () => {
-            if (els.addGroupForm.classList.contains("hidden")) {
-                openAddGroup();
-            } else {
+        els.addGroupToggle.addEventListener("click", () => openAddGroup());
+    }
+
+    if (els.addGroupScope) {
+        els.addGroupScope.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-scope]");
+            if (btn) {
+                setAddScope(btn.dataset.scope);
+            }
+        });
+    }
+
+    if (els.newGroupInput) {
+        els.newGroupInput.addEventListener("input", scheduleAddPreview);
+    }
+
+    if (els.addGroupModal) {
+        els.addGroupModal.addEventListener("click", (e) => {
+            if (e.target === els.addGroupModal) {
                 closeAddGroup();
             }
         });
     }
 
     if (els.cancelAddGroupBtn) {
-        els.cancelAddGroupBtn.addEventListener("click", () => {
-            els.newGroupInput.value = "";
-            closeAddGroup();
-        });
+        els.cancelAddGroupBtn.addEventListener("click", () => closeAddGroup());
     }
 
     els.addGroupBtn.addEventListener("click", addGroup);
@@ -582,8 +708,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const statusBtn = e.target.closest("[data-active]");
         if (statusBtn) {
             const active = statusBtn.dataset.active === "1";
+            const wasActive = Boolean(state.communities[state.selected]?.active);
             updateSelected((item) => ({ ...item, active }));
             renderGroups();
+            handleStatusChange(active, wasActive);
             return;
         }
 
@@ -596,17 +724,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 return { ...item, content_types: { ...item.content_types, [key]: enabled } };
             });
             typeBtn.classList.toggle("on", enabled);
-            return;
-        }
-
-        const editRefBtn = e.target.closest("[data-action='edit-ref']");
-        if (editRefBtn) {
-            const box = els.groupDetail.querySelector(".ref-edit");
-            if (box) {
-                box.classList.remove("hidden");
-                const input = box.querySelector("input");
-                if (input) input.focus();
-            }
             return;
         }
 
@@ -673,6 +790,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (e.key === "Escape") {
             closeLogs();
             closeTokens();
+            closeAddGroup();
         }
     });
 

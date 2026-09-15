@@ -113,6 +113,7 @@ def _install_test_stubs() -> None:
 _install_test_stubs()
 
 from src import web
+from src.backfill import BackfillRequests, compute_baseline
 from src.cache import Cache
 from src.config import (
     Community,
@@ -949,6 +950,101 @@ class VkRuCommunityTestCase(unittest.TestCase):
 
         self.assertEqual(owner_id, -232948281)
         self.assertEqual(vk.resolve_calls, 0)
+
+
+class BackfillBaselineTests(unittest.TestCase):
+    @staticmethod
+    def _posts(*specs: tuple[int, int]) -> list[Post]:
+        return [Post(id=post_id, owner_id=-123, date=date, text=f"p{post_id}") for post_id, date in specs]
+
+    def test_none_mode_uses_newest_post(self) -> None:
+        posts = self._posts((5, 500), (4, 400), (3, 300))
+        self.assertEqual(compute_baseline(posts, "none", 0, now=1000), (500, 5))
+
+    def test_posts_mode_borders_after_requested_window(self) -> None:
+        posts = self._posts((5, 500), (4, 400), (3, 300), (2, 200))
+        self.assertEqual(compute_baseline(posts, "posts", 2, now=1000), (300, 3))
+
+    def test_posts_mode_publishes_everything_when_window_is_larger(self) -> None:
+        posts = self._posts((5, 500), (4, 400))
+        self.assertEqual(compute_baseline(posts, "posts", 10, now=1000), (0, 0))
+
+    def test_days_mode_borders_at_cutoff(self) -> None:
+        now = 1_000_000
+        posts = self._posts((5, now - 86400), (4, now - 5 * 86400), (3, now - 10 * 86400))
+        self.assertEqual(compute_baseline(posts, "days", 3, now=now), (now - 5 * 86400, 4))
+
+    def test_days_mode_keeps_everything_when_all_posts_are_fresh(self) -> None:
+        now = 1_000_000
+        posts = self._posts((5, now - 3600), (4, now - 7200))
+        self.assertEqual(compute_baseline(posts, "days", 7, now=now), (0, 0))
+
+    def test_empty_fetch_has_no_baseline(self) -> None:
+        self.assertIsNone(compute_baseline([], "posts", 5, now=1))
+
+    def test_unknown_mode_falls_back_to_only_new(self) -> None:
+        posts = self._posts((5, 500), (4, 400))
+        self.assertEqual(compute_baseline(posts, "wat", 0, now=1000), (500, 5))
+
+
+class BackfillPipelineTests(unittest.TestCase):
+    @staticmethod
+    def _config(posts_limit: int = 10) -> Config:
+        return Config(
+            general=GeneralSettings(posts_limit=posts_limit),
+            vk=VKSettings(token="token"),
+            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            communities=[Community(id="club123", name="Club")],
+        )
+
+    @staticmethod
+    def _posts(count: int) -> list[Post]:
+        return [Post(id=i, owner_id=-123, date=i, text=f"p{i}") for i in range(count, 0, -1)]
+
+    def test_only_new_request_skips_existing_posts_and_is_consumed(self) -> None:
+        posts = self._posts(5)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requests = BackfillRequests(str(Path(tmpdir) / "backfill.json"))
+            requests.request("-123", "none", 0)
+
+            tg = FakeTGClient()
+            process_communities(self._config(), PagedVKClient(posts), tg, Cache(str(Path(tmpdir) / "cache.json")), requests)
+
+            self.assertEqual(tg.sent_posts, [])
+            self.assertIsNone(requests.get("-123"))
+
+    def test_posts_request_publishes_only_requested_window(self) -> None:
+        posts = self._posts(6)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requests = BackfillRequests(str(Path(tmpdir) / "backfill.json"))
+            requests.request("-123", "posts", 2)
+
+            tg = FakeTGClient()
+            process_communities(self._config(), PagedVKClient(posts), tg, Cache(str(Path(tmpdir) / "cache.json")), requests)
+
+            self.assertEqual(sorted(tg.sent_posts), [5, 6])
+            self.assertIsNone(requests.get("-123"))
+
+    def test_failed_fetch_keeps_request_for_next_run(self) -> None:
+        class BrokenVKClient(PagedVKClient):
+            def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> list[Post]:
+                raise RuntimeError("vk down")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            requests = BackfillRequests(str(Path(tmpdir) / "backfill.json"))
+            requests.request("-123", "posts", 3)
+
+            tg = FakeTGClient()
+            process_communities(
+                self._config(),
+                BrokenVKClient([]),
+                tg,
+                Cache(str(Path(tmpdir) / "cache.json")),
+                requests,
+            )
+
+            self.assertEqual(tg.sent_posts, [])
+            self.assertIsNotNone(requests.get("-123"))
 
 
 if __name__ == "__main__":
