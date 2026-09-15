@@ -463,6 +463,36 @@ input:checked + .slider::before {
     background-color: #f8fafc;
 }
 
+.group-item.is-paused {
+    background-color: #fafafa;
+}
+
+.group-item.is-paused .group-avatar,
+.group-item.is-paused .group-fields {
+    opacity: 0.55;
+}
+
+.group-item.is-paused .switch-state {
+    color: var(--text-secondary);
+}
+
+.pause-badge {
+    display: none;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background-color: #f1f5f9;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    white-space: nowrap;
+}
+
+.group-item.is-paused .pause-badge {
+    display: inline-flex;
+}
+
 .group-head {
     display: flex;
     justify-content: space-between;

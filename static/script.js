@@ -109,7 +109,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     ? `<img src="${group.icon}" alt="avatar">`
                     : (group.name || group.id || "VK").slice(0, 2).toUpperCase();
                 return `
-                    <div class="group-item" data-index="${idx}">
+                    <div class="group-item${group.active ? "" : " is-paused"}" data-index="${idx}">
                         <div class="group-head">
                             <div class="group-info">
                                 <div class="group-avatar">${avatar}</div>
@@ -118,8 +118,9 @@ document.addEventListener("DOMContentLoaded", () => {
                                     <input type="text" data-field="id" value="${group.id || ""}" placeholder="ID или ссылка">
                                 </div>
                             </div>
+                            <span class="pause-badge">на паузе</span>
                             <label class="switch-label">
-                                <span class="label-text">Активно</span>
+                                <span class="label-text switch-state">${group.active ? "Активно" : "Пауза"}</span>
                                 <input type="checkbox" data-field="active" ${group.active ? "checked" : ""}>
                                 <span class="slider"></span>
                             </label>
@@ -389,6 +390,9 @@ document.addEventListener("DOMContentLoaded", () => {
             ...item,
             [field]: e.target.type === "checkbox" ? e.target.checked : e.target.value,
         }));
+        if (field === "active") {
+            renderGroups();
+        }
     });
 
     els.groupsList.addEventListener("change", (e) => {

@@ -141,7 +141,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             "failed": 0,
         }
         if not community.active:
-            logger.debug("Сообщество %s выключено, пропускаем", community.name)
+            logger.info("Сообщество %s на паузе, пропускаем", community.name)
             continue
 
         owner_id = _resolve_owner_id(community.id, vk_client, cache)
