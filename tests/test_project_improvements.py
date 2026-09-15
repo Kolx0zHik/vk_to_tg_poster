@@ -890,6 +890,56 @@ class ConfigValidationTests(unittest.TestCase):
             self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8"))["general"]["cron"], "*/5 * * * *")
 
 
+class SaveConfigNormalizationTests(unittest.TestCase):
+    def _payload(self, community_id: str) -> "web.SaveRequest":
+        return web.SaveRequest(
+            general=web.GeneralModel(cron="*/10 * * * *"),
+            vk=web.TokenModel(),
+            telegram=web.TelegramModel(channel_id="@channel"),
+            communities=[web.CommunityModel(id=community_id, name="Группа")],
+        )
+
+    def test_save_normalizes_screen_name_id(self) -> None:
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                asyncio.run(web.save_config(self._payload("club232948281")))
+
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["communities"][0]["id"], "-232948281")
+
+    def test_save_normalizes_vk_ru_url(self) -> None:
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                asyncio.run(web.save_config(self._payload("https://vk.ru/club232948281")))
+
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["communities"][0]["id"], "-232948281")
+
+    def test_save_rejects_duplicates_after_normalization(self) -> None:
+        from fastapi import HTTPException
+
+        payload = web.SaveRequest(
+            general=web.GeneralModel(cron="*/10 * * * *"),
+            vk=web.TokenModel(),
+            telegram=web.TelegramModel(channel_id="@channel"),
+            communities=[
+                web.CommunityModel(id="club232948281", name="A"),
+                web.CommunityModel(id="-232948281", name="B"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                with self.assertRaises(HTTPException):
+                    asyncio.run(web.save_config(payload))
+
+
 class VkRuCommunityTestCase(unittest.TestCase):
     def test_vk_ru_url_resolves_without_api_call(self) -> None:
         vk = CountingVKClient()

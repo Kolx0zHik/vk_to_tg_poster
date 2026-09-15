@@ -157,9 +157,8 @@ def _fetch_vk_info(value: str) -> dict | None:
         if isinstance(resp, list) and resp:
             item = resp[0]
             gid = item.get("id")
-            screen = item.get("screen_name") or ""
             return {
-                "id": screen or (f"-{gid}" if gid else f"-{group_id}"),
+                "id": f"-{gid}" if gid else f"-{group_id}",
                 "name": item.get("name") or "",
                 "photo": item.get("photo_200") or item.get("photo_100"),
             }
@@ -300,6 +299,25 @@ async def get_config() -> dict:
 async def save_config(payload: SaveRequest) -> dict:
     current = _read_raw_config(CONFIG_PATH)
 
+    communities = []
+    seen_ids = set()
+    for community in payload.communities:
+        community_id = _normalize_owner_id(community.id)
+        if not community_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "У сообщества не задан id", "field": "communities"},
+            )
+        if community_id in seen_ids:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": f"Сообщество {community_id} указано дважды", "field": "communities"},
+            )
+        seen_ids.add(community_id)
+        entry = community.model_dump()
+        entry["id"] = community_id
+        communities.append(entry)
+
     merged = {
         "general": payload.general.model_dump(),
         "vk": {"token": payload.vk.token or current.get("vk", {}).get("token", "")},
@@ -307,7 +325,7 @@ async def save_config(payload: SaveRequest) -> dict:
             "channel_id": payload.telegram.channel_id,
             "bot_token": payload.telegram.bot_token or current.get("telegram", {}).get("bot_token", ""),
         },
-        "communities": [community.model_dump() for community in payload.communities],
+        "communities": communities,
     }
 
     try:
