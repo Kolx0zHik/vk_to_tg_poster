@@ -270,26 +270,6 @@ class AvatarCacheTests(unittest.TestCase):
             self.assertEqual(result["photo"], "https://example.com/avatar.jpg")
 
 
-class CountingCache(Cache):
-    def __init__(self, path: str):
-        self.persist_count = 0
-        super().__init__(path)
-
-    def _persist(self) -> None:
-        self.persist_count += 1
-        super()._persist()
-
-
-class FakeVKClient:
-    def resolve_screen_name(self, screen_name: str) -> tuple[str, int]:
-        return ("group", 123)
-
-    def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> list[Post]:
-        return [
-            Post(id=10, owner_id=owner_id, date=200, text="hello"),
-        ]
-
-
 class FakeTGClient:
     def __init__(self) -> None:
         self.sent_posts: list[int] = []
@@ -298,22 +278,137 @@ class FakeTGClient:
         self.sent_posts.append(post.id)
 
 
-class CachePersistenceTests(unittest.TestCase):
-    def test_pipeline_flushes_cache_once_per_community(self) -> None:
+class RecordingTGClient(FakeTGClient):
+    def __init__(self, fail_first: int = 0) -> None:
+        super().__init__()
+        self.fail_first = fail_first
+        self.calls = 0
+
+    def send_post(self, post: Post, allowed: ContentTypes) -> None:
+        self.calls += 1
+        if self.calls <= self.fail_first:
+            raise RuntimeError("telegram down")
+        self.sent_posts.append(post.id)
+
+
+class PagedVKClient:
+    def __init__(self, posts: list[Post]) -> None:
+        self.posts = posts
+        self.resolve_calls = 0
+
+    def resolve_screen_name(self, screen_name: str) -> tuple[str, int]:
+        self.resolve_calls += 1
+        return ("group", 123)
+
+    def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> list[Post]:
+        return self.posts[offset : offset + count]
+
+
+class PostAccountingTests(unittest.TestCase):
+    def _config(self, posts_limit: int = 10) -> Config:
+        return Config(
+            general=GeneralSettings(posts_limit=posts_limit),
+            vk=VKSettings(token="token"),
+            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            communities=[Community(id="club123", name="Club")],
+        )
+
+    def test_failed_publish_is_retried_and_eventually_published(self) -> None:
+        posts = [Post(id=5, owner_id=-123, date=100, text="hi")]
         with tempfile.TemporaryDirectory() as tmpdir:
-            cache = CountingCache(str(Path(tmpdir) / "cache.json"))
-            config = Config(
-                general=GeneralSettings(posts_limit=10),
-                vk=VKSettings(token="token"),
-                telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
-                communities=[Community(id="club123", name="Club 123")],
+            cache_path = str(Path(tmpdir) / "cache.json")
+
+            failing = RecordingTGClient(fail_first=1)
+            process_communities(self._config(), PagedVKClient(posts), failing, Cache(cache_path))
+            self.assertEqual(failing.sent_posts, [])
+
+            retrying = RecordingTGClient()
+            process_communities(self._config(), PagedVKClient(posts), retrying, Cache(cache_path))
+            self.assertEqual(retrying.sent_posts, [5])
+
+    def test_post_goes_dead_after_max_attempts(self) -> None:
+        posts = [Post(id=5, owner_id=-123, date=100, text="hi")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "cache.json")
+            for _ in range(Cache.PENDING_MAX_ATTEMPTS + 2):
+                process_communities(
+                    self._config(),
+                    PagedVKClient(posts),
+                    RecordingTGClient(fail_first=99),
+                    Cache(cache_path),
+                )
+
+            store = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+            self.assertEqual(store["posts"]["-123_5"]["status"], "dead")
+            self.assertEqual(store["posts"]["-123_5"]["attempts"], Cache.PENDING_MAX_ATTEMPTS)
+
+    def test_backlog_is_published_across_runs_without_loss(self) -> None:
+        posts = [Post(id=i, owner_id=-123, date=i, text=f"p{i}") for i in range(5, 0, -1)]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "cache.json")
+            published: list[int] = []
+            for _ in range(5):
+                tg = FakeTGClient()
+                process_communities(
+                    self._config(posts_limit=2), PagedVKClient(posts), tg, Cache(cache_path)
+                )
+                published.extend(tg.sent_posts)
+
+            self.assertEqual(sorted(published), [1, 2, 3, 4, 5])
+            self.assertEqual(len(published), len(set(published)))
+
+    def test_restart_does_not_repeat_published_posts(self) -> None:
+        posts = [
+            Post(id=2, owner_id=-123, date=20, text="two"),
+            Post(id=1, owner_id=-123, date=10, text="one"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "cache.json")
+            first = FakeTGClient()
+            process_communities(self._config(), PagedVKClient(posts), first, Cache(cache_path))
+            self.assertEqual(sorted(first.sent_posts), [1, 2])
+
+            second = FakeTGClient()
+            process_communities(self._config(), PagedVKClient(posts), second, Cache(cache_path))
+            self.assertEqual(second.sent_posts, [])
+
+    def test_legacy_cache_migration_does_not_repost(self) -> None:
+        posts = [
+            Post(id=3, owner_id=-123, date=300, text="new"),
+            Post(id=2, owner_id=-123, date=200, text="old"),
+            Post(id=1, owner_id=-123, date=100, text="older"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "dedup": [{"hash": "-123_2", "ts": 1_700_000_000}],
+                        "last_seen": {"-123": {"ts": 200, "post_id": 2}},
+                        "owner_ids": {},
+                    }
+                ),
+                encoding="utf-8",
             )
-            tg_client = FakeTGClient()
 
-            process_communities(config, FakeVKClient(), tg_client, cache)
+            tg = FakeTGClient()
+            process_communities(self._config(), PagedVKClient(posts), tg, Cache(str(cache_path)))
 
-            self.assertEqual(tg_client.sent_posts, [10])
-            self.assertEqual(cache.persist_count, 1)
+            self.assertEqual(tg.sent_posts, [3])
+            self.assertTrue((cache_path.parent / (cache_path.name + ".v1.bak")).exists())
+
+            store = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(store["meta"]["version"], Cache.SCHEMA_VERSION)
+            self.assertEqual(store["posts"]["-123_3"]["status"], "published")
+
+    def test_state_is_written_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            cache = Cache(str(cache_path))
+            cache.set_owner_id("club", -123)
+
+            self.assertFalse((cache_path.parent / (cache_path.name + ".tmp")).exists())
+            json.loads(cache_path.read_text(encoding="utf-8"))
 
 
 class CapturingTelegramClient(TelegramClient):

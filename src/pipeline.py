@@ -10,16 +10,7 @@ from .vk_client import VKClient
 
 logger = logging.getLogger("poster.pipeline")
 
-
-def _dedup_key(post: Post) -> str:
-    """
-    Build a deduplication key:
-    - Prefer original post ids from copy_history (source_owner_id/source_post_id) if present.
-    - Fallback to current post owner/id.
-    """
-    owner = post.source_owner_id if post.source_owner_id is not None else post.owner_id
-    pid = post.source_post_id if post.source_post_id is not None else post.id
-    return f"{owner}_{pid}"
+MAX_FETCH_PAGES = 5
 
 
 def _should_publish(post: Post, allowed: ContentTypes) -> bool:
@@ -40,7 +31,7 @@ def _contains_blocked(post: Post, blocked_keywords: List[str]) -> bool:
             text_parts.append(att.title)
     haystack = " ".join(text_parts).lower()
     for kw in blocked_keywords:
-        if kw.lower() in haystack and kw.strip():
+        if kw.strip() and kw.lower() in haystack:
             return True
     return False
 
@@ -111,15 +102,79 @@ def _resolve_owner_id(raw_id: str, vk_client: VKClient, cache: Cache) -> int | N
     return owner_id
 
 
+def _fetch_recent(vk_client: VKClient, cache: Cache, owner_id: int, page_size: int) -> List[Post]:
+    """Fetch the newest posts, paging back until we catch up with known posts."""
+    fetched: List[Post] = []
+    offset = 0
+    for _ in range(MAX_FETCH_PAGES):
+        batch = vk_client.fetch_posts(owner_id, count=page_size, offset=offset)
+        if not batch:
+            break
+        fetched.extend(batch)
+        if all(cache.is_known(owner_id, post) for post in batch):
+            break
+        if len(batch) < page_size:
+            break
+        offset += len(batch)
+    return fetched
+
+
+def _record_fetched(cache: Cache, owner_id: int, fetched: List[Post], stats: dict) -> None:
+    for post in sorted(fetched, key=lambda item: ((item.date or 0), item.id)):  # oldest first
+        result = cache.record_post(owner_id, post)
+        if result == "new":
+            stats["new"] += 1
+        elif result == "known":
+            stats["known"] += 1
+
+
+def _publish_pending(
+    cache: Cache,
+    owner_id: int,
+    community,
+    tg_client: TelegramClient,
+    general,
+    max_per_poll: int,
+    stats: dict,
+) -> None:
+    for key, post in cache.pending_posts(owner_id, limit=max_per_poll):
+        if _contains_blocked(post, general.blocked_keywords):
+            cache.mark_skipped(key)
+            stats["blocked"] += 1
+            continue
+        if not _should_publish(post, community.content_types):
+            cache.mark_skipped(key)
+            stats["skipped_by_type"] += 1
+            continue
+        try:
+            tg_client.send_post(post, community.content_types)
+        except Exception as exc:  # noqa: BLE001
+            status = cache.mark_failed(key)
+            stats["failed"] += 1
+            logger.error("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
+            if status == "dead":
+                logger.warning(
+                    "Пост %s из %s отброшен после %s попыток",
+                    post.id,
+                    community.name,
+                    cache.PENDING_MAX_ATTEMPTS,
+                )
+        else:
+            cache.mark_published(key)
+            stats["published"] += 1
+            logger.debug("Опубликован пост %s из %s", post.id, community.name)
+
+
 def process_communities(config: Config, vk_client: VKClient, tg_client: TelegramClient, cache: Cache) -> None:
     for community in config.communities:
         stats = {
             "fetched": 0,
             "new": 0,
             "published": 0,
-            "duplicates": 0,
+            "known": 0,
             "blocked": 0,
             "skipped_by_type": 0,
+            "failed": 0,
         }
         if not community.active:
             logger.debug("Сообщество %s выключено, пропускаем", community.name)
@@ -130,105 +185,30 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             logger.warning("Не удалось определить ID сообщества '%s', пропускаем", community.id)
             continue
 
+        max_per_poll = max(1, int(config.general.posts_limit))
+        page_size = min(10, max_per_poll)
         logger.debug("Запрашиваем посты из %s (owner_id=%s)", community.name, owner_id)
         try:
-            max_per_poll = max(1, int(config.general.posts_limit))
-            last_ts, last_id = cache.get_last_seen(owner_id)
-            need_total = max_per_poll
-
-            fetched: list[Post] = []
-            offset = 0
-            page_size = min(10, max_per_poll) if max_per_poll > 0 else 10
-            while len(fetched) < need_total:
-                batch = vk_client.fetch_posts(owner_id, count=page_size, offset=offset)
-                if not batch:
-                    break
-                fetched.extend(batch)
-                offset += len(batch)
-                # если встретили last_seen — выходим
-                if last_ts or last_id:
-                    if any(
-                        (p.date or 0) < (last_ts or 0)
-                        or ((p.date or 0) == (last_ts or 0) and p.id <= (last_id or 0))
-                        for p in batch
-                    ):
-                        break
-                if len(batch) < page_size:
-                    break
-
-            if not fetched:
-                logger.debug("Постов не найдено в %s", community.name)
-                logger.info("Сообщество %s: fetched=0 new=0 published=0 duplicates=0 blocked=0 skipped_by_type=0", community.name)
-                continue
-            stats["fetched"] = len(fetched)
-            logger.debug("Получено %s постов из %s", len(fetched), community.name)
+            fetched = _fetch_recent(vk_client, cache, owner_id, page_size)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Не удалось получить посты для %s: %s", community.name, exc)
+            logger.error("Не удалось получить посты для %s: %s", community.name, exc)
             continue
 
-        last_ts, last_id = cache.get_last_seen(owner_id)
-        newest = max(fetched, key=lambda p: ((p.date or 0), p.id))
-        filtered: list[Post] = []
-        for post in reversed(fetched):  # старые сначала
-            ts = getattr(post, "date", None) or 0
-            if last_ts:
-                if ts < last_ts:
-                    continue
-                if ts == last_ts and post.id <= (last_id or 0):
-                    continue
-            filtered.append(post)
-        # ограничиваем максимум за опрос
-        if len(filtered) > max_per_poll:
-            filtered = filtered[-max_per_poll:]
-        stats["new"] = len(filtered)
+        stats["fetched"] = len(fetched)
+        _record_fetched(cache, owner_id, fetched, stats)
+        _publish_pending(cache, owner_id, community, tg_client, config.general, max_per_poll, stats)
 
-        if not filtered:
-            logger.debug("Новых постов нет в %s", community.name)
-        else:
-            # Process oldest first to keep order.
-            for post in filtered:
-                if _contains_blocked(post, config.general.blocked_keywords):
-                    stats["blocked"] += 1
-                    logger.debug("Пост %s пропущен по стоп-словам в %s", post.id, community.name)
-                    continue
-                if not _should_publish(post, community.content_types):
-                    stats["skipped_by_type"] += 1
-                    continue
-                digest = _dedup_key(post)
-                if cache.is_duplicate(digest):
-                    stats["duplicates"] += 1
-                    logger.debug("Пост %s уже публиковался для %s, дубликат", post.id, community.name)
-                    continue
-                try:
-                    tg_client.send_post(post, community.content_types)
-                    cache.remember(owner_id, digest, persist=False)
-                    cache.update_last_seen(owner_id, post.id, getattr(post, "date", None), persist=False)
-                    stats["published"] += 1
-                    logger.debug("Опубликован пост %s из %s", post.id, community.name)
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
-        # фиксируем базовую точку last_seen, даже если ничего не отправили
-        # фиксируем базовую точку last_seen, даже если ничего не отправили,
-        # а также продвигаем last_seen, если видели более свежие посты (например, дубликаты)
-        if newest:
-            new_ts = getattr(newest, "date", None) or 0
-            should_advance = False
-            if last_ts is None:
-                should_advance = True
-            elif new_ts > (last_ts or 0):
-                should_advance = True
-            elif new_ts == (last_ts or 0) and newest.id > (last_id or 0):
-                should_advance = True
-            if should_advance:
-                cache.update_last_seen(owner_id, newest.id, getattr(newest, "date", None), persist=False)
-        cache.flush()
+        pending_left = len(cache.pending_posts(owner_id))
         logger.info(
-            "Сообщество %s: fetched=%s new=%s published=%s duplicates=%s blocked=%s skipped_by_type=%s",
+            "Сообщество %s: fetched=%s new=%s published=%s known=%s blocked=%s "
+            "skipped_by_type=%s failed=%s pending=%s",
             community.name,
             stats["fetched"],
             stats["new"],
             stats["published"],
-            stats["duplicates"],
+            stats["known"],
             stats["blocked"],
             stats["skipped_by_type"],
+            stats["failed"],
+            pending_left,
         )
