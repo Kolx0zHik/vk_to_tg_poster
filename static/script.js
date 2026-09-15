@@ -117,6 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
         check: '<path d="M20 6 9 17l-5-5"/>',
         pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
         trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+        external: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/>',
     };
 
     function svgIcon(paths) {
@@ -143,6 +144,16 @@ document.addEventListener("DOMContentLoaded", () => {
     function initials(group) {
         const source = (group.name || group.id || "VK").trim();
         return source.slice(0, 2).toUpperCase();
+    }
+
+    function vkCommunityUrl(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        if (/^https?:\/\//i.test(raw)) return raw;
+        if (/^-?\d+$/.test(raw)) {
+            return raw.startsWith("-") ? `https://vk.com/club${raw.slice(1)}` : `https://vk.com/id${raw}`;
+        }
+        return `https://vk.com/${raw.replace(/^@/, "")}`;
     }
 
     function applyAvatar(el, group) {
@@ -185,17 +196,19 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         els.groupsList.innerHTML = items
-            .map(
-                ({ group, index }) => `
+            .map(({ group, index }) => {
+                const url = vkCommunityUrl(group.id);
+                const name = escapeHtml(group.name || group.id || "Без названия");
+                const label = url
+                    ? `<a class="name" href="${escapeHtml(url)}" target="_blank" rel="noopener">${name}<span class="ext">${svgIcon(ICONS.external)}</span></a>`
+                    : `<span class="name">${name}</span>`;
+                return `
                 <div class="md-item${index === state.selected ? " sel" : ""}${group.active ? "" : " paused"}" data-index="${index}">
                     <div class="avatar sm" data-avatar="${index}">${escapeHtml(initials(group))}<span class="dot${group.active ? "" : " paused"}"></span></div>
-                    <div class="md-item-text">
-                        <div class="name">${escapeHtml(group.name || group.id || "Без названия")}</div>
-                        <div class="uid">${escapeHtml(group.id || "")}</div>
-                    </div>
+                    <div class="md-item-text">${label}</div>
                 </div>
-            `,
-            )
+            `;
+            })
             .join("");
         items.forEach(({ group, index }) => {
             applyAvatar(els.groupsList.querySelector(`[data-avatar="${index}"]`), group);
@@ -208,13 +221,15 @@ document.addEventListener("DOMContentLoaded", () => {
             els.groupDetail.innerHTML = '<div class="empty-state">Выберите сообщество из списка</div>';
             return;
         }
+        const url = vkCommunityUrl(group.id);
+        const displayName = escapeHtml(group.name || group.id || "Без названия");
+        const heading = url
+            ? `<h3><a href="${escapeHtml(url)}" target="_blank" rel="noopener">${displayName}<span class="ext">${svgIcon(ICONS.external)}</span></a></h3>`
+            : `<h3>${displayName}</h3>`;
         els.groupDetail.innerHTML = `
             <div class="md-detail-head">
                 <div class="avatar lg" data-avatar-detail>${escapeHtml(initials(group))}<span class="dot${group.active ? "" : " paused"}"></span></div>
-                <div>
-                    <h3>${escapeHtml(group.name || group.id || "Без названия")}</h3>
-                    <div class="uid">${escapeHtml(group.id || "")}</div>
-                </div>
+                <div>${heading}</div>
             </div>
             <div class="md-block">
                 <label>Статус</label>
@@ -239,8 +254,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 <input type="text" data-field="name" placeholder="Имя сообщества">
             </div>
             <div class="md-block">
-                <label>Ссылка или ID</label>
-                <input type="text" data-field="id" placeholder="-123456789 или ссылка">
+                <label>Сообщество в VK</label>
+                <div class="ref-view">
+                    ${
+                        url
+                            ? `<a class="linkish" href="${escapeHtml(url)}" target="_blank" rel="noopener">${svgIcon(ICONS.external)}Открыть в VK</a>`
+                            : '<span class="hint">Ссылка недоступна</span>'
+                    }
+                    <button type="button" class="link-muted" data-action="edit-ref">Изменить</button>
+                </div>
+                <div class="ref-edit hidden">
+                    <input type="text" data-field="id" placeholder="Ссылка на сообщество или название">
+                </div>
             </div>
             <div class="md-detail-foot">
                 <span class="pill">Изменения сохранит кнопка «Сохранить»</span>
@@ -571,6 +596,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 return { ...item, content_types: { ...item.content_types, [key]: enabled } };
             });
             typeBtn.classList.toggle("on", enabled);
+            return;
+        }
+
+        const editRefBtn = e.target.closest("[data-action='edit-ref']");
+        if (editRefBtn) {
+            const box = els.groupDetail.querySelector(".ref-edit");
+            if (box) {
+                box.classList.remove("hidden");
+                const input = box.querySelector("input");
+                if (input) input.focus();
+            }
             return;
         }
 

@@ -512,8 +512,7 @@ input:checked + .slider::before {
     box-shadow: inset 3px 0 0 var(--primary-color);
 }
 
-.md-item.paused .name,
-.md-item.paused .uid {
+.md-item.paused .name {
     opacity: 0.55;
 }
 
@@ -522,19 +521,102 @@ input:checked + .slider::before {
 }
 
 .md-item .name {
+    display: block;
     font-size: 0.85rem;
     font-weight: 600;
+    color: inherit;
+    text-decoration: none;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.md-item .uid {
-    font-size: 0.7rem;
+.md-item a.name:hover {
+    color: var(--primary-color);
+}
+
+.ext {
+    display: inline-flex;
+    vertical-align: -1px;
+    margin-left: 4px;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+}
+
+.ext svg {
+    width: 12px;
+    height: 12px;
+}
+
+.md-item .ext {
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.md-item:hover .ext,
+.md-item.sel .ext {
+    opacity: 1;
+}
+
+.md-detail-head h3 a {
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+    text-decoration: none;
+}
+
+.md-detail-head h3 a:hover {
+    color: var(--primary-color);
+}
+
+.md-detail-head h3 .ext {
+    opacity: 0.55;
+}
+
+.ref-view {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.link-muted {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.8rem;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.link-muted:hover {
+    color: var(--primary-color);
+}
+
+.hint {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.linkish {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--primary-color);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.linkish svg {
+    width: 14px;
+    height: 14px;
+}
+
+.linkish:hover {
+    text-decoration: underline;
 }
 
 .md-detail {
@@ -552,11 +634,6 @@ input:checked + .slider::before {
 .md-detail-head h3 {
     font-size: 1rem;
     font-weight: 600;
-}
-
-.md-detail-head .uid {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
 }
 
 .md-block {
