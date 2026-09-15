@@ -12,26 +12,28 @@ class Cache:
     """
 
     DEDUP_TTL = 24 * 3600
+    OWNER_ID_TTL = 30 * 24 * 3600
 
     def __init__(self, path: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._store: Dict = {"dedup": [], "last_seen": {}}
+        self._store: Dict = {"dedup": [], "last_seen": {}, "owner_ids": {}}
         self._dirty = False
         self._load()
 
     def _load(self) -> None:
         if not self.path.exists():
-            self._store = {"dedup": [], "last_seen": {}}
+            self._store = {"dedup": [], "last_seen": {}, "owner_ids": {}}
         else:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self._store = {
                     "dedup": data.get("dedup", []),
                     "last_seen": data.get("last_seen", {}),
+                    "owner_ids": data.get("owner_ids", {}),
                 }
             except Exception:
-                self._store = {"dedup": [], "last_seen": {}}
+                self._store = {"dedup": [], "last_seen": {}, "owner_ids": {}}
         self._dirty = False
         self._purge()
 
@@ -47,6 +49,15 @@ class Cache:
         if len(dedup) != len(self._store.get("dedup", [])):
             self._dirty = True
         self._store["dedup"] = dedup
+
+        owner_ttl = now_ts - self.OWNER_ID_TTL
+        owner_ids: Dict = self._store.get("owner_ids", {})
+        fresh_owner_ids = {
+            key: value for key, value in owner_ids.items() if value.get("ts", 0) >= owner_ttl
+        }
+        if len(fresh_owner_ids) != len(owner_ids):
+            self._dirty = True
+        self._store["owner_ids"] = fresh_owner_ids
 
     def flush(self) -> None:
         if self._dirty:
@@ -74,3 +85,18 @@ class Cache:
     def get_last_seen(self, community_id: int) -> tuple[Optional[int], Optional[int]]:
         entry = self._store.get("last_seen", {}).get(str(community_id), {})
         return entry.get("ts"), entry.get("post_id")
+
+    def get_owner_id(self, key: str) -> Optional[int]:
+        entry = self._store.get("owner_ids", {}).get(key)
+        if not entry:
+            return None
+        return entry.get("owner_id")
+
+    def set_owner_id(self, key: str, owner_id: int, persist: bool = True) -> None:
+        self._store.setdefault("owner_ids", {})[key] = {
+            "owner_id": owner_id,
+            "ts": int(time.time()),
+        }
+        self._dirty = True
+        if persist:
+            self._persist()

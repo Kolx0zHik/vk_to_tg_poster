@@ -45,16 +45,26 @@ def _contains_blocked(post: Post, blocked_keywords: List[str]) -> bool:
     return False
 
 
-def _normalize_owner_id(raw_id: str, vk_client: VKClient) -> int | None:
+def _community_cache_key(raw_id: str) -> str:
+    value = (raw_id or "").strip().lower()
+    for prefix in ("https://vk.com/", "http://vk.com/"):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+    value = value.split("?", 1)[0].split("#", 1)[0].strip("/")
+    if "/" in value:
+        value = value.split("/", 1)[0]
+    return value
+
+
+def _parse_owner_id(raw_id: str) -> int | None:
+    """Resolve a community id locally without any API call. None means a screen name."""
     value = (raw_id or "").strip()
     if not value:
         return None
     lower = value.lower()
-
-    if lower.startswith("https://vk.com/"):
-        lower = lower.replace("https://vk.com/", "")
-    if lower.startswith("http://vk.com/"):
-        lower = lower.replace("http://vk.com/", "")
+    for prefix in ("https://vk.com/", "http://vk.com/"):
+        if lower.startswith(prefix):
+            lower = lower[len(prefix) :]
     lower = lower.strip("/")
 
     # club12345, public12345, event12345 -> negative ids
@@ -69,15 +79,36 @@ def _normalize_owner_id(raw_id: str, vk_client: VKClient) -> int | None:
     if lower.lstrip("-").isdigit():
         return int(lower)
 
-    # screen name -> resolve via API
+    return None
+
+
+def _resolve_owner_id(raw_id: str, vk_client: VKClient, cache: Cache) -> int | None:
+    """Resolve a community owner id using the local parser and a persistent cache
+    before falling back to the VK API."""
+    value = (raw_id or "").strip()
+    if not value:
+        return None
+
+    local = _parse_owner_id(value)
+    if local is not None:
+        return local
+
+    key = _community_cache_key(value)
+    if key:
+        cached = cache.get_owner_id(key)
+        if cached is not None:
+            return cached
+
     try:
-        obj_type, object_id = vk_client.resolve_screen_name(lower)
-        if obj_type in {"group", "page", "event"}:
-            return -object_id
-        return object_id
+        obj_type, object_id = vk_client.resolve_screen_name(key or value)
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to resolve VK community id '%s': %s", raw_id, exc)
         return None
+
+    owner_id = -object_id if obj_type in {"group", "page", "event"} else object_id
+    if key:
+        cache.set_owner_id(key, owner_id)
+    return owner_id
 
 
 def process_communities(config: Config, vk_client: VKClient, tg_client: TelegramClient, cache: Cache) -> None:
@@ -94,7 +125,7 @@ def process_communities(config: Config, vk_client: VKClient, tg_client: Telegram
             logger.debug("Сообщество %s выключено, пропускаем", community.name)
             continue
 
-        owner_id = _normalize_owner_id(community.id, vk_client)
+        owner_id = _resolve_owner_id(community.id, vk_client, cache)
         if owner_id is None:
             logger.warning("Не удалось определить ID сообщества '%s', пропускаем", community.id)
             continue

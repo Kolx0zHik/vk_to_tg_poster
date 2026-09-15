@@ -117,7 +117,7 @@ from src.cache import Cache
 from src.config import Community, Config, ContentTypes, GeneralSettings, TelegramSettings, VKSettings
 from src.logger import configure_logging, redact_secrets
 from src.models import Attachment, Post
-from src.pipeline import process_communities
+from src.pipeline import _resolve_owner_id, process_communities
 from src.tg_client import TelegramClient
 from src.version import get_version
 
@@ -457,6 +457,152 @@ class VKClientErrorSanitizationTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertNotIn(secret, message)
         self.assertIn("VK request failed (wall.get)", message)
+
+
+class CountingVKClient:
+    def __init__(self) -> None:
+        self.resolve_calls = 0
+        self.fetched_owners: list[int] = []
+
+    def resolve_screen_name(self, screen_name: str) -> tuple[str, int]:
+        self.resolve_calls += 1
+        return ("group", 123)
+
+    def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> list[Post]:
+        self.fetched_owners.append(owner_id)
+        return [Post(id=1, owner_id=owner_id, date=100, text="hi")]
+
+
+class OwnerIdCacheTests(unittest.TestCase):
+    def _config(self) -> Config:
+        return Config(
+            general=GeneralSettings(posts_limit=10),
+            vk=VKSettings(token="token"),
+            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            communities=[Community(id="screenname", name="Screen")],
+        )
+
+    def test_screen_name_resolved_once_then_served_from_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "cache.json")
+
+            vk1 = CountingVKClient()
+            process_communities(self._config(), vk1, FakeTGClient(), Cache(cache_path))
+            self.assertEqual(vk1.resolve_calls, 1)
+            self.assertEqual(vk1.fetched_owners, [-123])
+
+            vk2 = CountingVKClient()
+            process_communities(self._config(), vk2, FakeTGClient(), Cache(cache_path))
+            self.assertEqual(vk2.resolve_calls, 0)
+            self.assertEqual(vk2.fetched_owners, [-123])
+
+    def test_local_id_does_not_use_api_or_cache(self) -> None:
+        vk = CountingVKClient()
+        cache = Cache(str(Path(tempfile.mkdtemp()) / "cache.json"))
+
+        owner_id = _resolve_owner_id("club123", vk, cache)
+
+        self.assertEqual(owner_id, -123)
+        self.assertEqual(vk.resolve_calls, 0)
+
+
+class FakeHTTPResponse:
+    def __init__(self, payload, status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(f"{self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+class VKClientRequestTests(unittest.TestCase):
+    def _make_client(self, responses):
+        from src.vk_client import VKClient
+
+        client = VKClient("token")
+        state = {"n": 0}
+
+        def fake_get(url, params=None, timeout=None):
+            index = min(state["n"], len(responses) - 1)
+            state["n"] += 1
+            item = responses[index]
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        client.session.get = fake_get
+        return client, state
+
+    def test_retries_rate_limit_then_succeeds(self) -> None:
+        client, state = self._make_client(
+            [
+                FakeHTTPResponse({"error": {"error_code": 6, "error_msg": "Too many requests per second"}}),
+                FakeHTTPResponse({"response": {"items": []}}),
+            ]
+        )
+
+        with patch("src.vk_client.time.sleep") as mock_sleep:
+            payload = client._request("wall.get", {}, 5)
+
+        self.assertEqual(payload["response"]["items"], [])
+        self.assertEqual(state["n"], 2)
+        self.assertTrue(mock_sleep.called)
+
+    def test_persistent_rate_limit_raises_after_retries(self) -> None:
+        from src import vk_client as vk_module
+
+        client, state = self._make_client(
+            [FakeHTTPResponse({"error": {"error_code": 6, "error_msg": "Too many"}})]
+        )
+
+        with patch("src.vk_client.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                client._request("wall.get", {}, 5)
+
+        self.assertEqual(state["n"], vk_module.VK_MAX_RETRIES + 1)
+
+    def test_non_retryable_error_is_not_retried(self) -> None:
+        client, state = self._make_client(
+            [FakeHTTPResponse({"error": {"error_code": 113, "error_msg": "Invalid user id"}})]
+        )
+
+        with patch("src.vk_client.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                client._request("wall.get", {}, 5)
+
+        self.assertEqual(state["n"], 1)
+
+    def test_network_error_is_retried_and_sanitized(self) -> None:
+        import requests
+
+        client, state = self._make_client(
+            [
+                requests.ConnectionError("url https://api.vk.com/method/wall.get?access_token=vk1.a.SECRET"),
+                FakeHTTPResponse({"response": {"items": []}}),
+            ]
+        )
+
+        with patch("src.vk_client.time.sleep"):
+            payload = client._request("wall.get", {}, 5)
+
+        self.assertEqual(state["n"], 2)
+        self.assertIn("response", payload)
+
+    def test_throttle_sleeps_between_calls(self) -> None:
+        client, state = self._make_client([FakeHTTPResponse({"response": {"items": []}})])
+
+        with patch("src.vk_client.time.sleep") as mock_sleep:
+            client._request("wall.get", {}, 5)
+            client._request("wall.get", {}, 5)
+
+        self.assertEqual(state["n"], 2)
+        self.assertTrue(any(call.args and call.args[0] > 0 for call in mock_sleep.call_args_list))
 
 
 if __name__ == "__main__":

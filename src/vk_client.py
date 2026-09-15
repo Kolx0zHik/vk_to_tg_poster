@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import List
 
 import requests
@@ -9,29 +10,63 @@ from .models import Attachment, Post
 
 logger = logging.getLogger("poster.vk")
 
+# Keep consecutive calls under VK's per-second limit for user tokens (~3 req/s).
+VK_REQUEST_INTERVAL = 0.34
+VK_MAX_RETRIES = 2
+VK_BACKOFF_BASE = 1.0
+VK_RETRYABLE_ERROR_CODES = {6, 9, 10}
+
 
 class VKClient:
     def __init__(self, token: str, api_version: str = "5.199"):
         self.token = token
         self.api_version = api_version
         self.session = requests.Session()
+        self._last_request_ts: float | None = None
 
-    def _request(self, method: str, params: dict, timeout: int) -> dict:
-        """Perform a VK API call without leaking the token-bearing URL into exceptions."""
-        try:
-            response = self.session.get(
-                f"https://api.vk.com/method/{method}", params=params, timeout=timeout
-            )
-        except requests.RequestException as exc:
-            raise RuntimeError(f"VK request failed ({method}): {type(exc).__name__}") from None
-        try:
-            response.raise_for_status()
-        except requests.HTTPError:
-            raise RuntimeError(f"VK HTTP error ({method}): {response.status_code}") from None
-        try:
-            return response.json()
-        except ValueError:
-            raise RuntimeError(f"VK returned invalid JSON ({method})") from None
+    def _throttle(self) -> None:
+        if VK_REQUEST_INTERVAL <= 0:
+            return
+        now = time.monotonic()
+        if self._last_request_ts is not None:
+            wait = VK_REQUEST_INTERVAL - (now - self._last_request_ts)
+            if wait > 0:
+                time.sleep(wait)
+        self._last_request_ts = time.monotonic()
+
+    def _request(
+        self, method: str, params: dict, timeout: int, max_retries: int = VK_MAX_RETRIES
+    ) -> dict:
+        """Call VK API without leaking the token-bearing URL, throttling and retrying
+        transient rate-limit (error_code 6/9/10) and network failures."""
+        url = f"https://api.vk.com/method/{method}"
+        last_error: RuntimeError | None = None
+        for attempt in range(max_retries + 1):
+            self._throttle()
+            try:
+                response = self.session.get(url, params=params, timeout=timeout)
+            except requests.RequestException as exc:
+                last_error = RuntimeError(f"VK request failed ({method}): {type(exc).__name__}")
+            else:
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError:
+                    raise RuntimeError(f"VK HTTP error ({method}): {response.status_code}") from None
+                try:
+                    payload = response.json()
+                except ValueError:
+                    raise RuntimeError(f"VK returned invalid JSON ({method})") from None
+                error = payload.get("error") if isinstance(payload, dict) else None
+                if not error:
+                    return payload
+                code = error.get("error_code") if isinstance(error, dict) else None
+                if code not in VK_RETRYABLE_ERROR_CODES:
+                    raise RuntimeError(f"VK API error: {error}")
+                last_error = RuntimeError(f"VK API error: {error}")
+                logger.debug("VK %s вернул error_code=%s, повтор", method, code)
+            if attempt < max_retries:
+                time.sleep(VK_BACKOFF_BASE * (2 ** attempt))
+        raise last_error or RuntimeError(f"VK request failed ({method})")
 
     def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> List[Post]:
         params = {
@@ -43,8 +78,6 @@ class VKClient:
         }
         logger.debug("Запрос VK wall.get для owner_id=%s", owner_id)
         payload = self._request("wall.get", params, timeout=15)
-        if "error" in payload:
-            raise RuntimeError(f"VK API error: {payload['error']}")
         items = payload.get("response", {}).get("items", [])
         posts: List[Post] = []
         for item in items:
@@ -129,8 +162,6 @@ class VKClient:
             "v": self.api_version,
         }
         payload = self._request("utils.resolveScreenName", params, timeout=10)
-        if "error" in payload:
-            raise RuntimeError(f"VK API error: {payload['error']}")
         resp_obj = payload.get("response") or {}
         object_id = resp_obj.get("object_id")
         object_type = resp_obj.get("type")
