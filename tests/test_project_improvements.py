@@ -421,6 +421,9 @@ class CapturingTelegramClient(TelegramClient):
     ) -> None:
         self.calls.append((method, data, json_mode, files))
 
+    def _download_media(self, url: str, max_bytes: int) -> bytes:
+        return b"image-bytes"
+
 
 class TelegramCaptionTests(unittest.TestCase):
     def test_single_photo_long_caption_is_truncated_into_one_photo_message(self) -> None:
@@ -714,17 +717,15 @@ class TelegramMediaFallbackTests(unittest.TestCase):
         client._download_media = fake_download
         return client
 
-    def test_single_photo_falls_back_to_upload(self) -> None:
+    @staticmethod
+    def _failing_download(client: CapturingTelegramClient) -> None:
+        def fake_download(url, max_bytes):
+            raise RuntimeError("download failed")
+
+        client._download_media = fake_download
+
+    def test_single_photo_is_uploaded_as_file(self) -> None:
         client = self._client_with_download()
-        attempts = {"n": 0}
-
-        def post_with_retry(method, data, json_mode=False, files=None):
-            attempts["n"] += 1
-            client.calls.append((method, data, json_mode, files))
-            if attempts["n"] == 1:
-                raise RuntimeError("failed to get HTTP URL content")
-
-        client._post_with_retry = post_with_retry
         client.send_photo(
             "https://vk/photo.jpg",
             caption="hi",
@@ -732,25 +733,28 @@ class TelegramMediaFallbackTests(unittest.TestCase):
             parse_mode="HTML",
         )
 
-        self.assertEqual(len(client.calls), 2)
-        self.assertIsNone(client.calls[0][3])
-        method, data, _, files = client.calls[1]
+        self.assertEqual(len(client.calls), 1)
+        method, data, _, files = client.calls[0]
         self.assertEqual(method, "sendPhoto")
         self.assertNotIn("photo", data)
         self.assertEqual(files["photo"][1], b"image-bytes")
+        self.assertEqual(data["caption"], "hi")
         self.assertEqual(client.downloaded, ["https://vk/photo.jpg"])
 
-    def test_media_group_falls_back_to_upload(self) -> None:
+    def test_single_photo_falls_back_to_url_when_download_fails(self) -> None:
+        client = CapturingTelegramClient()
+        self._failing_download(client)
+
+        client.send_photo("https://vk/photo.jpg", caption="hi")
+
+        self.assertEqual(len(client.calls), 1)
+        method, data, _, files = client.calls[0]
+        self.assertEqual(method, "sendPhoto")
+        self.assertEqual(data["photo"], "https://vk/photo.jpg")
+        self.assertIsNone(files)
+
+    def test_media_group_is_uploaded_as_files(self) -> None:
         client = self._client_with_download()
-        attempts = {"n": 0}
-
-        def post_with_retry(method, data, json_mode=False, files=None):
-            attempts["n"] += 1
-            client.calls.append((method, data, json_mode, files))
-            if attempts["n"] == 1:
-                raise RuntimeError("WEBPAGE_CURL_FAILED")
-
-        client._post_with_retry = post_with_retry
         client.send_media_group(
             [
                 {"type": "photo", "media": "https://vk/1.jpg"},
@@ -758,25 +762,41 @@ class TelegramMediaFallbackTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(len(client.calls), 2)
-        method, data, _, files = client.calls[1]
+        self.assertEqual(len(client.calls), 1)
+        method, data, json_mode, files = client.calls[0]
         self.assertEqual(method, "sendMediaGroup")
+        self.assertFalse(json_mode)
         self.assertIn("file0", files)
         self.assertIn("file1", files)
         uploaded = json.loads(data["media"])
         self.assertEqual(uploaded[0]["media"], "attach://file0")
         self.assertEqual(client.downloaded, ["https://vk/1.jpg", "https://vk/2.jpg"])
 
-    def test_upload_fallback_propagates_download_failure(self) -> None:
+    def test_media_group_falls_back_to_url_when_download_fails(self) -> None:
         client = CapturingTelegramClient()
+        self._failing_download(client)
+        media = [
+            {"type": "photo", "media": "https://vk/1.jpg"},
+            {"type": "photo", "media": "https://vk/2.jpg"},
+        ]
+
+        client.send_media_group(media)
+
+        self.assertEqual(len(client.calls), 1)
+        method, data, json_mode, files = client.calls[0]
+        self.assertEqual(method, "sendMediaGroup")
+        self.assertTrue(json_mode)
+        self.assertIsNone(files)
+        self.assertEqual(data["media"], media)
+
+    def test_single_photo_raises_when_download_and_url_fail(self) -> None:
+        client = CapturingTelegramClient()
+        self._failing_download(client)
 
         def post_with_retry(method, data, json_mode=False, files=None):
             raise RuntimeError("failed to get HTTP URL content")
 
         client._post_with_retry = post_with_retry
-        client._download_media = lambda url, max_bytes: (_ for _ in ()).throw(
-            RuntimeError("download failed")
-        )
 
         with self.assertRaises(RuntimeError):
             client.send_photo("https://vk/x.jpg")

@@ -154,7 +154,7 @@ class TelegramClient:
         parse_mode: Optional[str] = None,
     ) -> None:
         logger.debug("Отправка фото в Telegram")
-        data = {"chat_id": self.channel_id, "photo": photo_url}
+        data = {"chat_id": self.channel_id}
         if caption:
             data["caption"] = caption
         if parse_mode:
@@ -162,11 +162,12 @@ class TelegramClient:
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         try:
-            self._post_with_retry("sendPhoto", data)
-        except RuntimeError:
-            logger.warning("Telegram не смог скачать фото по URL, отправляем файлом")
             content = self._download_media(photo_url, MAX_PHOTO_BYTES)
-            data.pop("photo", None)
+        except RuntimeError:
+            logger.warning("Не удалось скачать фото, пробуем отправить по URL")
+            data["photo"] = photo_url
+            self._post_with_retry("sendPhoto", data)
+        else:
             self._post_with_retry("sendPhoto", data, files={"photo": ("photo.jpg", content)})
 
     def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
@@ -193,14 +194,16 @@ class TelegramClient:
 
     def send_media_group(self, media: List[dict]) -> None:
         logger.debug("Отправка медиагруппы в Telegram (%s элементов)", len(media))
-        data = {"chat_id": self.channel_id, "media": media}
         try:
-            self._post_with_retry("sendMediaGroup", data, json_mode=True)
+            payload, files = self._build_media_group_upload(media)
         except RuntimeError:
-            logger.warning("Telegram не смог скачать медиагруппу, отправляем файлами")
-            self._send_media_group_files(media)
+            logger.warning("Не удалось скачать медиагруппу, пробуем отправить по URL")
+            data = {"chat_id": self.channel_id, "media": media}
+            self._post_with_retry("sendMediaGroup", data, json_mode=True)
+        else:
+            self._post_with_retry("sendMediaGroup", payload, files=files)
 
-    def _send_media_group_files(self, media: List[dict]) -> None:
+    def _build_media_group_upload(self, media: List[dict]) -> tuple[dict, dict]:
         files: dict = {}
         upload_media: List[dict] = []
         for index, item in enumerate(media):
@@ -213,7 +216,7 @@ class TelegramClient:
             "chat_id": self.channel_id,
             "media": json.dumps(upload_media, ensure_ascii=False),
         }
-        self._post_with_retry("sendMediaGroup", payload, files=files)
+        return payload, files
 
     def send_post(self, post: Post, allowed: ContentTypes) -> None:
         vk_url = post.vk_link
