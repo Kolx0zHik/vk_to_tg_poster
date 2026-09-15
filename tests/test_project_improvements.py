@@ -114,12 +114,23 @@ _install_test_stubs()
 
 from src import web
 from src.cache import Cache
-from src.config import Community, Config, ContentTypes, GeneralSettings, TelegramSettings, VKSettings
+from src.config import (
+    Community,
+    Config,
+    ConfigError,
+    ContentTypes,
+    GeneralSettings,
+    TelegramSettings,
+    VKSettings,
+    load_config,
+    save_config_dict,
+)
 from src.logger import configure_logging, redact_secrets
 from src.models import Attachment, Post
 from src.pipeline import _resolve_owner_id, process_communities
 from src.tg_client import TelegramClient
 from src.version import get_version
+from src.vk_ids import normalize_community_key, normalize_display_id, parse_owner_id
 
 
 class LoggingTests(unittest.TestCase):
@@ -814,6 +825,80 @@ class TelegramMediaFallbackTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             client._download_media("https://vk/x.jpg", max_bytes=10)
+
+
+class VkIdNormalizationTests(unittest.TestCase):
+    def test_vk_ru_url_is_normalized(self) -> None:
+        self.assertEqual(normalize_community_key("https://vk.ru/club232948281"), "club232948281")
+        self.assertEqual(normalize_display_id("https://vk.ru/club232948281"), "-232948281")
+        self.assertEqual(parse_owner_id("https://vk.ru/club232948281"), -232948281)
+
+    def test_host_variants_are_supported(self) -> None:
+        self.assertEqual(parse_owner_id("m.vk.com/public45"), -45)
+        self.assertEqual(parse_owner_id("http://new.vk.com/event7"), -7)
+        self.assertEqual(parse_owner_id("vk.com/id123"), 123)
+
+    def test_query_and_hash_are_stripped(self) -> None:
+        self.assertEqual(normalize_community_key("https://vk.com/uren_live?w=wall-1_2#x"), "uren_live")
+        self.assertEqual(parse_owner_id("https://vk.com/club5?w=wall-2_3"), -5)
+
+    def test_screen_name_and_empty_inputs(self) -> None:
+        self.assertEqual(normalize_community_key("@overhearuren"), "overhearuren")
+        self.assertEqual(normalize_community_key("https://vk.ru/"), "")
+        self.assertIsNone(parse_owner_id(""))
+        self.assertEqual(normalize_display_id(""), "")
+
+
+class ConfigValidationTests(unittest.TestCase):
+    def _write(self, tmpdir: str, text: str) -> Path:
+        path = Path(tmpdir) / "config.yaml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_non_numeric_posts_limit_raises_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, "general:\n  posts_limit: notanumber\n")
+            with self.assertRaises(ConfigError):
+                load_config(str(path), require_tokens=False, require_channel=False)
+
+    def test_empty_cron_raises_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, 'general:\n  cron: ""\n')
+            with self.assertRaises(ConfigError):
+                load_config(str(path), require_tokens=False, require_channel=False)
+
+    def test_community_without_id_raises_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, "communities:\n  - name: No Id\n")
+            with self.assertRaises(ConfigError):
+                load_config(str(path), require_tokens=False, require_channel=False)
+
+    def test_invalid_yaml_raises_config_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(tmpdir, "general: [unclosed\n")
+            with self.assertRaises(ConfigError):
+                load_config(str(path), require_tokens=False, require_channel=False)
+
+    def test_save_config_is_atomic(self) -> None:
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.yaml"
+            save_config_dict({"general": {"cron": "*/5 * * * *"}}, path)
+
+            self.assertFalse((path.parent / (path.name + ".tmp")).exists())
+            self.assertEqual(yaml.safe_load(path.read_text(encoding="utf-8"))["general"]["cron"], "*/5 * * * *")
+
+
+class VkRuCommunityTestCase(unittest.TestCase):
+    def test_vk_ru_url_resolves_without_api_call(self) -> None:
+        vk = CountingVKClient()
+        cache = Cache(str(Path(tempfile.mkdtemp()) / "cache.json"))
+
+        owner_id = _resolve_owner_id("https://vk.ru/club232948281", vk, cache)
+
+        self.assertEqual(owner_id, -232948281)
+        self.assertEqual(vk.resolve_calls, 0)
 
 
 if __name__ == "__main__":

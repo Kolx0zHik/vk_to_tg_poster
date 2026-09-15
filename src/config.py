@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -82,32 +82,62 @@ def _load_yaml(path: Path, allow_missing: bool = False) -> Dict:
         if allow_missing:
             return {}
         raise ConfigError(f"Config file not found: {path}")
-    with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as exc:
+        raise ConfigError(f"Не удалось прочитать конфиг {path}: {exc}") from None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError("Корень конфига должен быть словарём (mapping)")
+    return data
+
+
+def _as_int(value: Any, field_name: str, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{field_name} должно быть числом") from None
 
 
 def _parse_log_rotation(raw: Dict) -> LogRotationSettings:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("general.log_rotation должно быть словарём")
     return LogRotationSettings(
-        max_bytes=int(raw.get("max_bytes", LogRotationSettings.max_bytes)),
-        backup_count=int(raw.get("backup_count", LogRotationSettings.backup_count)),
+        max_bytes=_as_int(raw.get("max_bytes", LogRotationSettings.max_bytes), "log_rotation.max_bytes", LogRotationSettings.max_bytes),
+        backup_count=_as_int(
+            raw.get("backup_count", LogRotationSettings.backup_count),
+            "log_rotation.backup_count",
+            LogRotationSettings.backup_count,
+        ),
     )
 
 
 def _parse_general(raw: Dict) -> GeneralSettings:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("Секция general должна быть словарём")
     rotation = _parse_log_rotation(raw.get("log_rotation", {}))
     blocked = raw.get("blocked_keywords", []) or []
     blocked_list = [str(k).strip() for k in blocked if str(k).strip()]
+
+    cron = str(raw.get("cron", GeneralSettings.cron) or "").strip()
+    if not cron:
+        raise ConfigError("general.cron не должен быть пустым")
+
     return GeneralSettings(
-        cron=raw.get("cron", GeneralSettings.cron),
+        cron=cron,
         vk_api_version=str(raw.get("vk_api_version", GeneralSettings.vk_api_version)),
-        posts_limit=int(raw.get("posts_limit", GeneralSettings.posts_limit)),
+        posts_limit=_as_int(raw.get("posts_limit", GeneralSettings.posts_limit), "general.posts_limit", GeneralSettings.posts_limit),
         cache_file=raw.get("cache_file", GeneralSettings.cache_file),
         log_file=raw.get("log_file", GeneralSettings.log_file),
         log_level=raw.get("log_level", GeneralSettings.log_level),
         log_rotation=rotation,
         blocked_keywords=blocked_list,
         refresh_avatars=bool(raw.get("refresh_avatars", True)),
-        log_retention_days=int(raw.get("log_retention_days", 2)),
+        log_retention_days=_as_int(raw.get("log_retention_days", 2), "general.log_retention_days", 2),
     )
 
 
@@ -146,10 +176,15 @@ def _parse_communities(raw_list: Optional[List[Dict]]) -> List[Community]:
         return []
     communities: List[Community] = []
     for raw in raw_list:
+        if not isinstance(raw, dict):
+            raise ConfigError("Каждое сообщество должно быть словарём")
+        community_id = str(raw.get("id") or "").strip()
+        if not community_id:
+            raise ConfigError("У сообщества не задан id")
         content_types = _parse_content_types(raw.get("content_types"))
         communities.append(
             Community(
-                id=str(raw.get("id")),
+                id=community_id,
                 name=str(raw.get("name", "")),
                 active=bool(raw.get("active", True)),
                 content_types=content_types,
@@ -231,7 +266,12 @@ def default_config_dict() -> Dict:
 
 
 def save_config_dict(data: Dict, path: str | Path) -> None:
+    """Write config atomically so a concurrent reader never sees a partial file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)

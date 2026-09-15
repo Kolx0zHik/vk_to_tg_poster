@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "fixes/**"
+      - "feature/**"
     tags:
       - "v*"
   workflow_dispatch:

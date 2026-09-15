@@ -6,6 +6,7 @@ from .config import Config, ContentTypes
 from .models import Post
 from .tg_client import TelegramClient
 from .vk_client import VKClient
+from .vk_ids import normalize_community_key, parse_owner_id
 
 
 logger = logging.getLogger("poster.pipeline")
@@ -36,43 +37,6 @@ def _contains_blocked(post: Post, blocked_keywords: List[str]) -> bool:
     return False
 
 
-def _community_cache_key(raw_id: str) -> str:
-    value = (raw_id or "").strip().lower()
-    for prefix in ("https://vk.com/", "http://vk.com/"):
-        if value.startswith(prefix):
-            value = value[len(prefix) :]
-    value = value.split("?", 1)[0].split("#", 1)[0].strip("/")
-    if "/" in value:
-        value = value.split("/", 1)[0]
-    return value
-
-
-def _parse_owner_id(raw_id: str) -> int | None:
-    """Resolve a community id locally without any API call. None means a screen name."""
-    value = (raw_id or "").strip()
-    if not value:
-        return None
-    lower = value.lower()
-    for prefix in ("https://vk.com/", "http://vk.com/"):
-        if lower.startswith(prefix):
-            lower = lower[len(prefix) :]
-    lower = lower.strip("/")
-
-    # club12345, public12345, event12345 -> negative ids
-    for prefix in ("club", "public", "event"):
-        if lower.startswith(prefix) and lower[len(prefix) :].isdigit():
-            return -int(lower[len(prefix) :])
-
-    if lower.startswith("id") and lower[2:].isdigit():
-        return int(lower[2:])
-
-    # numeric owner id with sign
-    if lower.lstrip("-").isdigit():
-        return int(lower)
-
-    return None
-
-
 def _resolve_owner_id(raw_id: str, vk_client: VKClient, cache: Cache) -> int | None:
     """Resolve a community owner id using the local parser and a persistent cache
     before falling back to the VK API."""
@@ -80,11 +44,11 @@ def _resolve_owner_id(raw_id: str, vk_client: VKClient, cache: Cache) -> int | N
     if not value:
         return None
 
-    local = _parse_owner_id(value)
+    local = parse_owner_id(value)
     if local is not None:
         return local
 
-    key = _community_cache_key(value)
+    key = normalize_community_key(value)
     if key:
         cached = cache.get_owner_id(key)
         if cached is not None:

@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 import json
 import time
-import re
-from urllib.parse import unquote
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
 from .logger import redact_secrets
 from .version import get_version
+from .vk_ids import normalize_display_id
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "data/config.yaml"))
@@ -107,30 +106,7 @@ def _read_raw_config(path: Path) -> dict:
 
 
 def _normalize_owner_id(raw: str) -> str:
-    value = (raw or "").strip()
-    if not value:
-        return ""
-    lower = value.lower()
-    # убираем параметры и якоря
-    lower = lower.split("?", 1)[0].split("#", 1)[0]
-    for prefix in ("https://vk.com/", "http://vk.com/"):
-        if lower.startswith(prefix):
-            lower = lower.replace(prefix, "")
-    lower = lower.strip("/")
-    if "/" in lower:
-        lower = lower.split("/", 1)[0]
-    lower = unquote(lower)
-    lower = re.sub(r"[^a-z0-9._-]+", "", lower)
-    if not lower:
-        return ""
-    for prefix in ("club", "public", "event"):
-        if lower.startswith(prefix) and lower[len(prefix) :].isdigit():
-            return f"-{lower[len(prefix) :]}"
-    if lower.startswith("id") and lower[2:].isdigit():
-        return lower[2:]
-    if lower.lstrip("-").isdigit():
-        return lower
-    return lower[:64]
+    return normalize_display_id(raw)
 
 
 def _fetch_vk_info(value: str) -> dict | None:
