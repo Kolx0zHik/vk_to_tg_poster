@@ -320,43 +320,25 @@ class TelegramClient:
                 stats_parts.append(f"Лайки: {video.likes}")
             stats_text = " | ".join(stats_parts)
 
-            if video.url and video.url.endswith((".mp4", ".mov", ".mkv")):
-                caption_parts = []
-                if allowed.text and post.text and not text_used:
-                    reserve = len(stats_text) + 2 if stats_text else 0
-                    caption_parts.append(
-                        _truncate_text(_escape_html(post.text), CAPTION_LIMIT - reserve)
-                    )
+            link_url = video.url or vk_url
+            base_text = post.text if (allowed.text and post.text and not text_used) else ""
+            link_text = _escape_html(video.title) if video.title else "Видео"
+            if link_url:
+                text_body_parts = []
+                if base_text:
+                    text_body_parts.append(_escape_html(base_text))
+                link_html = f'<a href="{link_url}">{link_text}</a>'
+                text_body_parts.append(link_html)
                 if stats_text:
-                    caption_parts.append(stats_text)
-                caption = "\n\n".join(part for part in caption_parts if part)
-                self.send_video(
-                    video.url,
-                    caption=caption if caption else None,
-                    vk_url=vk_url,
-                    parse_mode="HTML" if caption else None,
-                )
-                text_used = text_used or bool(post.text)
+                    text_body_parts.append(stats_text)
+                text_body = "\n\n".join(text_body_parts)
+                self.send_text(text_body, vk_url=vk_url, parse_mode="HTML", disable_preview=False)
+                text_used = text_used or bool(base_text)
             else:
-                link_url = video.url or vk_url
-                base_text = post.text if (allowed.text and post.text and not text_used) else ""
-                link_text = _escape_html(video.title) if video.title else "Видео"
-                if link_url:
-                    text_body_parts = []
-                    if base_text:
-                        text_body_parts.append(_escape_html(base_text))
-                    link_html = f'<a href="{link_url}">{link_text}</a>'
-                    text_body_parts.append(link_html)
-                    if stats_text:
-                        text_body_parts.append(stats_text)
-                    text_body = "\n\n".join(text_body_parts)
-                    self.send_text(text_body, vk_url=vk_url, parse_mode="HTML", disable_preview=False)
-                    text_used = text_used or bool(base_text)
-                else:
-                    residual = [link_text]
-                    if stats_text:
-                        residual.append(stats_text)
-                    self.send_text("\n".join(residual), vk_url=vk_url)
+                residual = [link_text]
+                if stats_text:
+                    residual.append(stats_text)
+                self.send_text("\n".join(residual), vk_url=vk_url)
 
         for audio in audios:
             if audio.url:

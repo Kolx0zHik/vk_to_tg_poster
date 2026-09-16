@@ -541,12 +541,12 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
 
-    def test_video_caption_is_truncated_to_caption_limit(self) -> None:
+    def test_video_is_sent_as_link_with_stats(self) -> None:
         client = CapturingTelegramClient()
         post = Post(
             id=11,
             owner_id=-123,
-            text=self._long_text(),
+            text="Короткий текст поста",
             attachments=[
                 Attachment(type="video", url="https://example.com/video.mp4", views=10, likes=2)
             ],
@@ -554,11 +554,53 @@ class TelegramLongTextTests(unittest.TestCase):
 
         client.send_post(post, ContentTypes())
 
-        self.assertEqual([call[0] for call in client.calls], ["sendVideo"])
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
         _, data, _, _ = client.calls[0]
-        self.assertLessEqual(len(data["caption"]), CAPTION_LIMIT)
         self.assertEqual(data["parse_mode"], "HTML")
-        self.assertIn("Просмотры: 10", data["caption"])
+        self.assertIn("Просмотры: 10", data["text"])
+        self.assertIn("Лайки: 2", data["text"])
+        self.assertIn("https://example.com/video.mp4", data["text"])
+        self.assertIn("Короткий текст поста", data["text"])
+        self.assertIn("Открыть пост в VK", data.get("reply_markup", ""))
+
+    def test_video_with_vk_player_url_is_sent_as_link(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=11,
+            owner_id=-123,
+            text="Смотрим видео",
+            attachments=[
+                Attachment(
+                    type="video",
+                    url="https://vk.com/video-123_456",
+                    title="Моё видео",
+                    views=100,
+                )
+            ],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertIn("Моё видео", data["text"])
+        self.assertIn("https://vk.com/video-123_456", data["text"])
+        self.assertIn("Просмотры: 100", data["text"])
+
+    def test_video_without_url_uses_vk_link(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=11,
+            owner_id=-123,
+            text="",
+            attachments=[Attachment(type="video", url="", title="Без URL")],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertIn("Без URL", data["text"])
 
     def test_audio_caption_is_truncated_to_caption_limit(self) -> None:
         client = CapturingTelegramClient()
