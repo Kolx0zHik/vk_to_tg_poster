@@ -12,6 +12,7 @@ from .models import Attachment, Post
 
 logger = logging.getLogger("poster.tg")
 CAPTION_LIMIT = 1024
+MESSAGE_LIMIT = 4096
 CAPTION_CONTINUATION = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
@@ -31,15 +32,62 @@ def _escape_html(text: str) -> str:
     )
 
 
-def _build_caption_with_link(text: str, vk_url: str, max_len: int = 1024) -> str:
-    link_html = f'<a href="{vk_url}">Открыть пост в VK</a>'
-    if not text:
-        return link_html
-    text_html = _escape_html(text)
-    reserve = len(link_html) + 2  # for \n\n
-    if len(text_html) + reserve > max_len:
-        text_html = text_html[: max_len - reserve - 3] + "..."
-    return f"{text_html}\n\n{link_html}"
+def _safe_offset(text: str, offset: int) -> int:
+    """Move a cut offset left so an HTML entity or tag is not split in half."""
+    if offset >= len(text):
+        return len(text)
+    amp = text.rfind("&", 0, offset)
+    if amp != -1:
+        semicolon = text.find(";", amp)
+        if semicolon >= offset:
+            offset = amp
+    tag = text.rfind("<", 0, offset)
+    if tag != -1:
+        closing = text.find(">", tag)
+        if closing >= offset:
+            offset = tag
+    return offset
+
+
+def _break_offset(text: str, limit: int) -> int:
+    """Pick the preferred cut offset: paragraph, line, sentence, word, then hard cut."""
+    if limit >= len(text):
+        return len(text)
+    window = text[:limit]
+    for separator in ("\n\n", "\n"):
+        index = window.rfind(separator)
+        if index > 0:
+            return index + len(separator)
+    sentence = 0
+    for separator in (". ", "! ", "? ", "… "):
+        index = window.rfind(separator)
+        if index > sentence:
+            sentence = index + len(separator)
+    if sentence > 0:
+        return sentence
+    space = window.rfind(" ")
+    if space > 0:
+        return space + 1
+    return limit
+
+
+def _split_text(text: str, limit: int = MESSAGE_LIMIT) -> List[str]:
+    """Split a ready-to-send message body into chunks that fit the Telegram limit."""
+    remaining = text.strip()
+    chunks: List[str] = []
+    while len(remaining) > limit:
+        offset = _safe_offset(remaining, _break_offset(remaining, limit))
+        if offset <= 0:
+            offset = limit
+        chunk = remaining[:offset].strip()
+        if not chunk:
+            offset = limit
+            chunk = remaining[:offset]
+        chunks.append(chunk)
+        remaining = remaining[offset:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
@@ -67,6 +115,21 @@ def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
             prefix = words[0]
 
     return f"{_escape_html(prefix)}{CAPTION_CONTINUATION}"
+
+
+def _truncate_html_text(text_html: str, max_len: int = CAPTION_LIMIT) -> str:
+    """Truncate an already escaped HTML caption to the Telegram caption limit."""
+    if len(text_html) <= max_len:
+        return text_html
+
+    budget = max_len - len(CAPTION_CONTINUATION)
+    if budget <= 0:
+        return CAPTION_CONTINUATION[:max_len]
+
+    offset = _safe_offset(text_html, _break_offset(text_html, budget))
+    if offset <= 0:
+        offset = budget
+    return f"{text_html[:offset].rstrip()}{CAPTION_CONTINUATION}"
 
 
 class TelegramClient:
@@ -135,16 +198,18 @@ class TelegramClient:
         disable_preview: bool = False,
     ) -> None:
         logger.debug("Отправка текстового сообщения в Telegram")
-        data = {
-            "chat_id": self.channel_id,
-            "text": text,
-            "disable_web_page_preview": disable_preview,
-        }
-        if parse_mode:
-            data["parse_mode"] = parse_mode
-        if vk_url and use_keyboard:
-            data["reply_markup"] = _vk_link_keyboard(vk_url)
-        self._post_with_retry("sendMessage", data)
+        chunks = _split_text(text)
+        for index, chunk in enumerate(chunks):
+            data = {
+                "chat_id": self.channel_id,
+                "text": chunk,
+                "disable_web_page_preview": disable_preview,
+            }
+            if parse_mode:
+                data["parse_mode"] = parse_mode
+            if vk_url and use_keyboard and index == len(chunks) - 1:
+                data["reply_markup"] = _vk_link_keyboard(vk_url)
+            self._post_with_retry("sendMessage", data)
 
     def send_photo(
         self,
@@ -170,20 +235,36 @@ class TelegramClient:
         else:
             self._post_with_retry("sendPhoto", data, files={"photo": ("photo.jpg", content)})
 
-    def send_video(self, video_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
+    def send_video(
+        self,
+        video_url: str,
+        caption: str | None = None,
+        vk_url: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> None:
         logger.debug("Отправка видео в Telegram")
         data = {"chat_id": self.channel_id, "video": video_url}
         if caption:
             data["caption"] = caption
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post_with_retry("sendVideo", data)
 
-    def send_audio(self, audio_url: str, caption: str | None = None, vk_url: Optional[str] = None) -> None:
+    def send_audio(
+        self,
+        audio_url: str,
+        caption: str | None = None,
+        vk_url: Optional[str] = None,
+        parse_mode: Optional[str] = None,
+    ) -> None:
         logger.debug("Отправка аудио в Telegram")
         data = {"chat_id": self.channel_id, "audio": audio_url}
         if caption:
             data["caption"] = caption
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         if vk_url:
             data["reply_markup"] = _vk_link_keyboard(vk_url)
         self._post_with_retry("sendAudio", data)
@@ -260,7 +341,10 @@ class TelegramClient:
             if video.url and video.url.endswith((".mp4", ".mov", ".mkv")):
                 caption_parts = []
                 if allowed.text and post.text and not text_used:
-                    caption_parts.append(_escape_html(post.text))
+                    reserve = len(stats_text) + 2 if stats_text else 0
+                    caption_parts.append(
+                        _truncate_html_text(_escape_html(post.text), CAPTION_LIMIT - reserve)
+                    )
                 if stats_text:
                     caption_parts.append(stats_text)
                 caption = "\n\n".join(part for part in caption_parts if part)
@@ -268,6 +352,7 @@ class TelegramClient:
                     video.url,
                     caption=caption if caption else None,
                     vk_url=vk_url,
+                    parse_mode="HTML" if caption else None,
                 )
                 text_used = text_used or bool(post.text)
             else:
@@ -293,7 +378,16 @@ class TelegramClient:
 
         for audio in audios:
             if audio.url:
-                self.send_audio(audio.url, caption=post.text if (allowed.text and not text_used) else audio.title, vk_url=vk_url)
+                if allowed.text and post.text and not text_used:
+                    caption = _truncate_html_text(_escape_html(post.text))
+                else:
+                    caption = _truncate_html_text(_escape_html(audio.title)) if audio.title else None
+                self.send_audio(
+                    audio.url,
+                    caption=caption,
+                    vk_url=vk_url,
+                    parse_mode="HTML" if caption else None,
+                )
                 text_used = text_used or bool(post.text)
             else:
                 self.send_link(vk_url, title=audio.title or "Аудио", vk_url=vk_url)

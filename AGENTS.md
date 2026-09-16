@@ -124,11 +124,14 @@ can roll back progress and cause re-publishing.
 - Single photo may include caption.
 - Multiple photos are sent as media group, then text separately.
 - Long photo captions are truncated to `CAPTION_LIMIT` (1024) with a continuation notice.
+- Long message texts are split into parts up to `MESSAGE_LIMIT` (4096) on paragraph/line/sentence/word
+  boundaries without breaking HTML entities or tags; the VK link button goes on the last part.
+- Video/audio captions are truncated to 1024 as well.
 - Some videos are sent as links instead of uploaded video files.
 - Photos are downloaded and uploaded as files (10 MB limit) with a fallback to URL delivery.
 - Link button back to the VK post is part of expected behavior.
 - Telegram 429 handling retries once based on `retry_after`.
-- Not handled yet: text over 4096 characters, albums over 10 photos, re-send without duplicates after a
+- Not handled yet: albums over 10 photos, re-send without duplicates after a
   partial failure, video/audio uploaded as files. See `STATE.md`.
 
 ### Web UI

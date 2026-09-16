@@ -129,7 +129,7 @@ from src.config import (
 from src.logger import configure_logging, redact_secrets
 from src.models import Attachment, Post
 from src.pipeline import _resolve_owner_id, process_communities
-from src.tg_client import TelegramClient
+from src.tg_client import CAPTION_LIMIT, MESSAGE_LIMIT, TelegramClient, _split_text
 from src.version import get_version
 from src.vk_ids import normalize_community_key, normalize_display_id, parse_owner_id
 
@@ -459,6 +459,121 @@ class TelegramCaptionTests(unittest.TestCase):
         self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
         self.assertRegex(caption.removesuffix(continuation).rsplit(" ", 1)[-1], r"^word\d{3}$")
+
+
+class TelegramLongTextTests(unittest.TestCase):
+    @staticmethod
+    def _long_text(parts: int = 800) -> str:
+        return " ".join(f"word{i:04d}" for i in range(parts))
+
+    def test_short_text_is_sent_as_single_message_with_keyboard(self) -> None:
+        client = CapturingTelegramClient()
+        client.send_text("короткий текст", vk_url="https://vk.com/wall1_1")
+
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertEqual(data["text"], "короткий текст")
+        self.assertIn("reply_markup", data)
+
+    def test_split_text_keeps_every_chunk_within_limit(self) -> None:
+        text = self._long_text()
+        chunks = _split_text(text)
+
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), MESSAGE_LIMIT)
+        self.assertEqual("".join(chunks).replace(" ", ""), text.replace(" ", ""))
+
+    def test_split_text_prefers_paragraph_boundary(self) -> None:
+        text = "a" * 3000 + "\n\n" + "b" * 3000
+        chunks = _split_text(text)
+
+        self.assertEqual(chunks, ["a" * 3000, "b" * 3000])
+
+    def test_split_text_does_not_cut_html_tag_or_entity(self) -> None:
+        tag = '<a href="https://vk.com/wall1_1?a=1&amp;b=2">ссылка</a>'
+        text = ("слово " * 900) + tag + (" хвост" * 400)
+        chunks = _split_text(text)
+
+        self.assertIn(tag, "".join(chunks))
+        for chunk in chunks:
+            self.assertEqual(chunk.count("<"), chunk.count(">"))
+
+    def test_lone_ampersand_does_not_shrink_the_first_chunk(self) -> None:
+        text = ("слово " * 700) + "& ещё " + ("слово " * 700)
+        chunks = _split_text(text)
+
+        self.assertGreater(len(chunks[0]), MESSAGE_LIMIT - 100)
+
+    def test_long_text_is_split_into_messages_with_keyboard_on_last(self) -> None:
+        client = CapturingTelegramClient()
+        client.send_text(self._long_text(), vk_url="https://vk.com/wall1_1", parse_mode="HTML")
+
+        self.assertGreater(len(client.calls), 1)
+        self.assertTrue(all(call[0] == "sendMessage" for call in client.calls))
+        for index, (_, data, _, _) in enumerate(client.calls):
+            self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+            self.assertEqual(data.get("parse_mode"), "HTML")
+            if index == len(client.calls) - 1:
+                self.assertIn("reply_markup", data)
+            else:
+                self.assertNotIn("reply_markup", data)
+
+    def test_album_with_long_text_sends_text_in_parts(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=9,
+            owner_id=-123,
+            text=self._long_text(),
+            attachments=[
+                Attachment(type="photo", url="https://example.com/1.jpg"),
+                Attachment(type="photo", url="https://example.com/2.jpg"),
+            ],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        methods = [call[0] for call in client.calls]
+        self.assertEqual(methods[0], "sendMediaGroup")
+        self.assertEqual(set(methods[1:]), {"sendMessage"})
+        self.assertGreater(len(methods), 2)
+        _, last, _, _ = client.calls[-1]
+        self.assertIn("reply_markup", last)
+
+    def test_video_caption_is_truncated_to_caption_limit(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=11,
+            owner_id=-123,
+            text=self._long_text(),
+            attachments=[
+                Attachment(type="video", url="https://example.com/video.mp4", views=10, likes=2)
+            ],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendVideo"])
+        _, data, _, _ = client.calls[0]
+        self.assertLessEqual(len(data["caption"]), CAPTION_LIMIT)
+        self.assertEqual(data["parse_mode"], "HTML")
+        self.assertIn("Просмотры: 10", data["caption"])
+
+    def test_audio_caption_is_truncated_to_caption_limit(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=12,
+            owner_id=-123,
+            text=self._long_text(),
+            attachments=[Attachment(type="audio", url="https://example.com/a.mp3", title="Трек")],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendAudio"])
+        _, data, _, _ = client.calls[0]
+        self.assertLessEqual(len(data["caption"]), CAPTION_LIMIT)
+        self.assertEqual(data["parse_mode"], "HTML")
 
 
 def _fake_vk_token(secret: str) -> str:
