@@ -129,7 +129,14 @@ from src.config import (
 from src.logger import configure_logging, redact_secrets
 from src.models import Attachment, Post
 from src.pipeline import _resolve_owner_id, process_communities
-from src.tg_client import CAPTION_LIMIT, MESSAGE_LIMIT, TelegramClient, _split_text
+from src.tg_client import (
+    CAPTION_CONTINUATION,
+    CAPTION_LIMIT,
+    MESSAGE_LIMIT,
+    PLAIN_CONTINUATION,
+    TelegramClient,
+    _truncate_text,
+)
 from src.version import get_version
 from src.vk_ids import normalize_community_key, normalize_display_id, parse_owner_id
 
@@ -475,51 +482,46 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertEqual(data["text"], "короткий текст")
         self.assertIn("reply_markup", data)
 
-    def test_split_text_keeps_every_chunk_within_limit(self) -> None:
-        text = self._long_text()
-        chunks = _split_text(text)
-
-        self.assertGreater(len(chunks), 1)
-        for chunk in chunks:
-            self.assertLessEqual(len(chunk), MESSAGE_LIMIT)
-        self.assertEqual("".join(chunks).replace(" ", ""), text.replace(" ", ""))
-
-    def test_split_text_prefers_paragraph_boundary(self) -> None:
-        text = "a" * 3000 + "\n\n" + "b" * 3000
-        chunks = _split_text(text)
-
-        self.assertEqual(chunks, ["a" * 3000, "b" * 3000])
-
-    def test_split_text_does_not_cut_html_tag_or_entity(self) -> None:
-        tag = '<a href="https://vk.com/wall1_1?a=1&amp;b=2">ссылка</a>'
-        text = ("слово " * 900) + tag + (" хвост" * 400)
-        chunks = _split_text(text)
-
-        self.assertIn(tag, "".join(chunks))
-        for chunk in chunks:
-            self.assertEqual(chunk.count("<"), chunk.count(">"))
-
-    def test_lone_ampersand_does_not_shrink_the_first_chunk(self) -> None:
-        text = ("слово " * 700) + "& ещё " + ("слово " * 700)
-        chunks = _split_text(text)
-
-        self.assertGreater(len(chunks[0]), MESSAGE_LIMIT - 100)
-
-    def test_long_text_is_split_into_messages_with_keyboard_on_last(self) -> None:
+    def test_long_text_is_truncated_into_one_message_with_notice_and_keyboard(self) -> None:
         client = CapturingTelegramClient()
         client.send_text(self._long_text(), vk_url="https://vk.com/wall1_1", parse_mode="HTML")
 
-        self.assertGreater(len(client.calls), 1)
-        self.assertTrue(all(call[0] == "sendMessage" for call in client.calls))
-        for index, (_, data, _, _) in enumerate(client.calls):
-            self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
-            self.assertEqual(data.get("parse_mode"), "HTML")
-            if index == len(client.calls) - 1:
-                self.assertIn("reply_markup", data)
-            else:
-                self.assertNotIn("reply_markup", data)
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertTrue(data["text"].endswith(CAPTION_CONTINUATION))
+        self.assertEqual(data["parse_mode"], "HTML")
+        self.assertIn("reply_markup", data)
 
-    def test_album_with_long_text_sends_text_in_parts(self) -> None:
+    def test_long_plain_text_uses_plain_continuation_notice(self) -> None:
+        client = CapturingTelegramClient()
+        client.send_text(self._long_text(), vk_url="https://vk.com/wall1_1")
+
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertTrue(data["text"].endswith(PLAIN_CONTINUATION))
+        self.assertNotIn("<b>", data["text"])
+        self.assertNotIn("parse_mode", data)
+
+    def test_truncate_text_prefers_paragraph_boundary(self) -> None:
+        text = ("a" * 100) + "\n\n" + ("b" * 100)
+
+        result = _truncate_text(text, 120, "...")
+
+        self.assertEqual(result, ("a" * 100) + "...")
+
+    def test_truncate_text_does_not_cut_html_tag_or_entity(self) -> None:
+        tag = '<a href="https://example.com/long">link</a>'
+        with_tag = ("x" * 50) + tag
+
+        result = _truncate_text(with_tag, 70, "...", html=True)
+        entity = _truncate_text(("x" * 100) + "&amp;" + ("y" * 200), 104, "...", html=True)
+
+        self.assertEqual(result, ("x" * 50) + "...")
+        self.assertEqual(entity, ("x" * 100) + "...")
+
+    def test_album_with_long_text_sends_one_truncated_message(self) -> None:
         client = CapturingTelegramClient()
         post = Post(
             id=9,
@@ -533,12 +535,23 @@ class TelegramLongTextTests(unittest.TestCase):
 
         client.send_post(post, ContentTypes())
 
-        methods = [call[0] for call in client.calls]
-        self.assertEqual(methods[0], "sendMediaGroup")
-        self.assertEqual(set(methods[1:]), {"sendMessage"})
-        self.assertGreater(len(methods), 2)
-        _, last, _, _ = client.calls[-1]
-        self.assertIn("reply_markup", last)
+        self.assertEqual([call[0] for call in client.calls], ["sendMediaGroup", "sendMessage"])
+        _, data, _, _ = client.calls[-1]
+        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertTrue(data["text"].endswith(CAPTION_CONTINUATION))
+        self.assertIn("reply_markup", data)
+
+    def test_plain_long_post_is_truncated_into_single_message(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(id=13, owner_id=-123, text=self._long_text(), attachments=[])
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
+        _, data, _, _ = client.calls[0]
+        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertTrue(data["text"].endswith(PLAIN_CONTINUATION))
+        self.assertIn("reply_markup", data)
 
     def test_video_caption_is_truncated_to_caption_limit(self) -> None:
         client = CapturingTelegramClient()

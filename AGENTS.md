@@ -124,8 +124,8 @@ can roll back progress and cause re-publishing.
 - Single photo may include caption.
 - Multiple photos are sent as media group, then text separately.
 - Long photo captions are truncated to `CAPTION_LIMIT` (1024) with a continuation notice.
-- Long message texts are split into parts up to `MESSAGE_LIMIT` (4096) on paragraph/line/sentence/word
-  boundaries without breaking HTML entities or tags; the VK link button goes on the last part.
+- Long message texts are truncated to `MESSAGE_LIMIT` (4096) with a continuation notice, on
+  paragraph/line/sentence/word boundaries and without breaking HTML entities or tags (same idea as captions).
 - Video/audio captions are truncated to 1024 as well.
 - Some videos are sent as links instead of uploaded video files.
 - Photos are downloaded and uploaded as files (10 MB limit) with a fallback to URL delivery.

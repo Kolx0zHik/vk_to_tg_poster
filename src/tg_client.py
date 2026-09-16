@@ -14,6 +14,7 @@ logger = logging.getLogger("poster.tg")
 CAPTION_LIMIT = 1024
 MESSAGE_LIMIT = 4096
 CAPTION_CONTINUATION = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
+PLAIN_CONTINUATION = "...\n\nПродолжение текста читайте в источнике."
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
 
@@ -71,23 +72,21 @@ def _break_offset(text: str, limit: int) -> int:
     return limit
 
 
-def _split_text(text: str, limit: int = MESSAGE_LIMIT) -> List[str]:
-    """Split a ready-to-send message body into chunks that fit the Telegram limit."""
-    remaining = text.strip()
-    chunks: List[str] = []
-    while len(remaining) > limit:
-        offset = _safe_offset(remaining, _break_offset(remaining, limit))
-        if offset <= 0:
-            offset = limit
-        chunk = remaining[:offset].strip()
-        if not chunk:
-            offset = limit
-            chunk = remaining[:offset]
-        chunks.append(chunk)
-        remaining = remaining[offset:].lstrip()
-    if remaining:
-        chunks.append(remaining)
-    return chunks
+def _truncate_text(text: str, limit: int, notice: str, html: bool = False) -> str:
+    """Cut text to the limit on a readable boundary and append a continuation notice."""
+    if len(text) <= limit:
+        return text
+
+    budget = limit - len(notice)
+    if budget <= 0:
+        return notice[:limit]
+
+    offset = _break_offset(text, budget)
+    if html:
+        offset = _safe_offset(text, offset)
+    if offset <= 0:
+        offset = budget
+    return f"{text[:offset].rstrip()}{notice}"
 
 
 def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
@@ -115,21 +114,6 @@ def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
             prefix = words[0]
 
     return f"{_escape_html(prefix)}{CAPTION_CONTINUATION}"
-
-
-def _truncate_html_text(text_html: str, max_len: int = CAPTION_LIMIT) -> str:
-    """Truncate an already escaped HTML caption to the Telegram caption limit."""
-    if len(text_html) <= max_len:
-        return text_html
-
-    budget = max_len - len(CAPTION_CONTINUATION)
-    if budget <= 0:
-        return CAPTION_CONTINUATION[:max_len]
-
-    offset = _safe_offset(text_html, _break_offset(text_html, budget))
-    if offset <= 0:
-        offset = budget
-    return f"{text_html[:offset].rstrip()}{CAPTION_CONTINUATION}"
 
 
 class TelegramClient:
@@ -198,18 +182,21 @@ class TelegramClient:
         disable_preview: bool = False,
     ) -> None:
         logger.debug("Отправка текстового сообщения в Telegram")
-        chunks = _split_text(text)
-        for index, chunk in enumerate(chunks):
-            data = {
-                "chat_id": self.channel_id,
-                "text": chunk,
-                "disable_web_page_preview": disable_preview,
-            }
-            if parse_mode:
-                data["parse_mode"] = parse_mode
-            if vk_url and use_keyboard and index == len(chunks) - 1:
-                data["reply_markup"] = _vk_link_keyboard(vk_url)
-            self._post_with_retry("sendMessage", data)
+        html = parse_mode == "HTML"
+        notice = CAPTION_CONTINUATION if html else PLAIN_CONTINUATION
+        text = _truncate_text(text.strip(), MESSAGE_LIMIT, notice, html=html)
+        if not text:
+            return
+        data = {
+            "chat_id": self.channel_id,
+            "text": text,
+            "disable_web_page_preview": disable_preview,
+        }
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+        if vk_url and use_keyboard:
+            data["reply_markup"] = _vk_link_keyboard(vk_url)
+        self._post_with_retry("sendMessage", data)
 
     def send_photo(
         self,
@@ -343,7 +330,12 @@ class TelegramClient:
                 if allowed.text and post.text and not text_used:
                     reserve = len(stats_text) + 2 if stats_text else 0
                     caption_parts.append(
-                        _truncate_html_text(_escape_html(post.text), CAPTION_LIMIT - reserve)
+                        _truncate_text(
+                            _escape_html(post.text),
+                            CAPTION_LIMIT - reserve,
+                            CAPTION_CONTINUATION,
+                            html=True,
+                        )
                     )
                 if stats_text:
                     caption_parts.append(stats_text)
@@ -379,9 +371,15 @@ class TelegramClient:
         for audio in audios:
             if audio.url:
                 if allowed.text and post.text and not text_used:
-                    caption = _truncate_html_text(_escape_html(post.text))
+                    caption = _truncate_text(
+                        _escape_html(post.text), CAPTION_LIMIT, CAPTION_CONTINUATION, html=True
+                    )
+                elif audio.title:
+                    caption = _truncate_text(
+                        _escape_html(audio.title), CAPTION_LIMIT, CAPTION_CONTINUATION, html=True
+                    )
                 else:
-                    caption = _truncate_html_text(_escape_html(audio.title)) if audio.title else None
+                    caption = None
                 self.send_audio(
                     audio.url,
                     caption=caption,
