@@ -112,6 +112,28 @@ def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
     return f"{_escape_html(prefix)}{CAPTION_CONTINUATION}"
 
 
+def _build_video_caption(
+    link_url: str,
+    link_text: str,
+    stats_text: str = "",
+    post_text: str = "",
+    max_len: int = CAPTION_LIMIT,
+) -> str:
+    parts = [f'<a href="{_escape_html(link_url)}">Видео: {link_text}</a>']
+    if stats_text:
+        parts.append(stats_text)
+    header = "\n".join(parts)
+    if not post_text:
+        return _truncate_text(header, max_len)
+
+    separator = "\n\n"
+    budget = max_len - len(header) - len(separator)
+    if budget <= 0:
+        return _truncate_text(header, max_len)
+    body = _truncate_text(_escape_html(post_text), budget)
+    return f"{header}{separator}{body}"
+
+
 class TelegramClient:
     def __init__(self, bot_token: str, channel_id: str):
         self.bot_token = bot_token
@@ -324,18 +346,11 @@ class TelegramClient:
             base_text = post.text if (allowed.text and post.text and not text_used) else ""
             link_text = _escape_html(video.title) if video.title else "Видео"
             if link_url:
-                text_body_parts = []
-                if base_text:
-                    text_body_parts.append(_escape_html(base_text))
-                link_html = f'<a href="{_escape_html(link_url)}">{link_text}</a>'
-                text_body_parts.append(link_html)
-                if stats_text:
-                    text_body_parts.append(stats_text)
-                text_body = "\n\n".join(text_body_parts)
+                text_body = _build_video_caption(link_url, link_text, stats_text, base_text)
                 if video.preview_url:
                     self.send_photo(
                         video.preview_url,
-                        caption=_truncate_text(text_body),
+                        caption=text_body,
                         vk_url=vk_url,
                         parse_mode="HTML",
                     )

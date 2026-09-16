@@ -592,6 +592,33 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertIn("Просмотры: 534", data["caption"])
         self.assertIn("Открыть пост в VK", data.get("reply_markup", ""))
 
+    def test_video_preview_caption_keeps_link_before_truncated_text(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=11,
+            owner_id=-123,
+            text=self._long_text(),
+            attachments=[
+                Attachment(
+                    type="video",
+                    url="https://vk.com/video-123_456",
+                    title="Тест",
+                    views=100,
+                    preview_url="https://sun.example.com/video.jpg",
+                )
+            ],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendPhoto"])
+        _, data, _, _ = client.calls[0]
+        caption = data["caption"]
+        self.assertLessEqual(len(caption), CAPTION_LIMIT)
+        self.assertTrue(caption.startswith('<a href="https://vk.com/video-123_456">Видео: Тест</a>'))
+        self.assertIn("Просмотры: 100", caption)
+        self.assertIn(CAPTION_CONTINUATION, caption)
+
     def test_video_with_vk_player_url_is_sent_as_link(self) -> None:
         client = CapturingTelegramClient()
         post = Post(
