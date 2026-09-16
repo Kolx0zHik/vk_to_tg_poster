@@ -12,9 +12,7 @@ from .models import Attachment, Post
 
 logger = logging.getLogger("poster.tg")
 CAPTION_LIMIT = 1024
-MESSAGE_LIMIT = 4096
 CAPTION_CONTINUATION = "...\n\n<b>Продолжение текста читайте в источнике.</b>"
-PLAIN_CONTINUATION = "...\n\nПродолжение текста читайте в источнике."
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
 
@@ -72,21 +70,19 @@ def _break_offset(text: str, limit: int) -> int:
     return limit
 
 
-def _truncate_text(text: str, limit: int, notice: str, html: bool = False) -> str:
-    """Cut text to the limit on a readable boundary and append a continuation notice."""
+def _truncate_text(text: str, limit: int = CAPTION_LIMIT) -> str:
+    """Cut an HTML body to the limit on a readable boundary and append the continuation notice."""
     if len(text) <= limit:
         return text
 
-    budget = limit - len(notice)
+    budget = limit - len(CAPTION_CONTINUATION)
     if budget <= 0:
-        return notice[:limit]
+        return CAPTION_CONTINUATION[:limit]
 
-    offset = _break_offset(text, budget)
-    if html:
-        offset = _safe_offset(text, offset)
+    offset = _safe_offset(text, _break_offset(text, budget))
     if offset <= 0:
         offset = budget
-    return f"{text[:offset].rstrip()}{notice}"
+    return f"{text[:offset].rstrip()}{CAPTION_CONTINUATION}"
 
 
 def _build_photo_caption(text: str, max_len: int = CAPTION_LIMIT) -> str:
@@ -178,13 +174,11 @@ class TelegramClient:
         text: str,
         vk_url: Optional[str] = None,
         use_keyboard: bool = True,
-        parse_mode: Optional[str] = None,
+        parse_mode: Optional[str] = "HTML",
         disable_preview: bool = False,
     ) -> None:
         logger.debug("Отправка текстового сообщения в Telegram")
-        html = parse_mode == "HTML"
-        notice = CAPTION_CONTINUATION if html else PLAIN_CONTINUATION
-        text = _truncate_text(text.strip(), MESSAGE_LIMIT, notice, html=html)
+        text = _truncate_text(text.strip())
         if not text:
             return
         data = {
@@ -257,7 +251,8 @@ class TelegramClient:
         self._post_with_retry("sendAudio", data)
 
     def send_link(self, link_url: str, title: str | None = None, vk_url: Optional[str] = None) -> None:
-        text = f"{title or ''}\n{link_url}" if title else link_url
+        link_html = _escape_html(link_url)
+        text = f"{_escape_html(title)}\n{link_html}" if title else link_html
         self.send_text(text.strip(), vk_url=vk_url)
 
     def send_media_group(self, media: List[dict]) -> None:
@@ -330,12 +325,7 @@ class TelegramClient:
                 if allowed.text and post.text and not text_used:
                     reserve = len(stats_text) + 2 if stats_text else 0
                     caption_parts.append(
-                        _truncate_text(
-                            _escape_html(post.text),
-                            CAPTION_LIMIT - reserve,
-                            CAPTION_CONTINUATION,
-                            html=True,
-                        )
+                        _truncate_text(_escape_html(post.text), CAPTION_LIMIT - reserve)
                     )
                 if stats_text:
                     caption_parts.append(stats_text)
@@ -371,13 +361,9 @@ class TelegramClient:
         for audio in audios:
             if audio.url:
                 if allowed.text and post.text and not text_used:
-                    caption = _truncate_text(
-                        _escape_html(post.text), CAPTION_LIMIT, CAPTION_CONTINUATION, html=True
-                    )
+                    caption = _truncate_text(_escape_html(post.text))
                 elif audio.title:
-                    caption = _truncate_text(
-                        _escape_html(audio.title), CAPTION_LIMIT, CAPTION_CONTINUATION, html=True
-                    )
+                    caption = _truncate_text(_escape_html(audio.title))
                 else:
                     caption = None
                 self.send_audio(
@@ -392,7 +378,7 @@ class TelegramClient:
 
         # Текст, если ещё не использовали и нет фото/медиа с подписью.
         if allowed.text and post.text and not text_used and not photos and not videos and not audios:
-            self.send_text(post.text, vk_url=vk_url)
+            self.send_text(_escape_html(post.text), vk_url=vk_url)
 
         # Ссылки отдельными сообщениями.
         for link in links:

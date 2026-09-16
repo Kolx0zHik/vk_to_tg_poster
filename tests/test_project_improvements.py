@@ -132,8 +132,6 @@ from src.pipeline import _resolve_owner_id, process_communities
 from src.tg_client import (
     CAPTION_CONTINUATION,
     CAPTION_LIMIT,
-    MESSAGE_LIMIT,
-    PLAIN_CONTINUATION,
     TelegramClient,
     _truncate_text,
 )
@@ -482,44 +480,33 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertEqual(data["text"], "короткий текст")
         self.assertIn("reply_markup", data)
 
-    def test_long_text_is_truncated_into_one_message_with_notice_and_keyboard(self) -> None:
+    def test_long_text_is_truncated_into_one_message_with_caption_notice(self) -> None:
         client = CapturingTelegramClient()
         client.send_text(self._long_text(), vk_url="https://vk.com/wall1_1", parse_mode="HTML")
 
         self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
         _, data, _, _ = client.calls[0]
-        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertLessEqual(len(data["text"]), CAPTION_LIMIT)
         self.assertTrue(data["text"].endswith(CAPTION_CONTINUATION))
         self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
 
-    def test_long_plain_text_uses_plain_continuation_notice(self) -> None:
-        client = CapturingTelegramClient()
-        client.send_text(self._long_text(), vk_url="https://vk.com/wall1_1")
-
-        self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
-        _, data, _, _ = client.calls[0]
-        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
-        self.assertTrue(data["text"].endswith(PLAIN_CONTINUATION))
-        self.assertNotIn("<b>", data["text"])
-        self.assertNotIn("parse_mode", data)
-
     def test_truncate_text_prefers_paragraph_boundary(self) -> None:
-        text = ("a" * 100) + "\n\n" + ("b" * 100)
+        text = ("a" * 50) + "\n\n" + ("b" * 3000)
 
-        result = _truncate_text(text, 120, "...")
+        result = _truncate_text(text)
 
-        self.assertEqual(result, ("a" * 100) + "...")
+        self.assertEqual(result, ("a" * 50) + CAPTION_CONTINUATION)
 
     def test_truncate_text_does_not_cut_html_tag_or_entity(self) -> None:
+        budget = CAPTION_LIMIT - len(CAPTION_CONTINUATION)
         tag = '<a href="https://example.com/long">link</a>'
-        with_tag = ("x" * 50) + tag
 
-        result = _truncate_text(with_tag, 70, "...", html=True)
-        entity = _truncate_text(("x" * 100) + "&amp;" + ("y" * 200), 104, "...", html=True)
+        with_tag = _truncate_text(("x" * (budget - 20)) + tag + ("y" * 2000))
+        entity = _truncate_text(("x" * (budget - 2)) + "&amp;" + ("y" * 2000))
 
-        self.assertEqual(result, ("x" * 50) + "...")
-        self.assertEqual(entity, ("x" * 100) + "...")
+        self.assertEqual(with_tag, ("x" * (budget - 20)) + CAPTION_CONTINUATION)
+        self.assertEqual(entity, ("x" * (budget - 2)) + CAPTION_CONTINUATION)
 
     def test_album_with_long_text_sends_one_truncated_message(self) -> None:
         client = CapturingTelegramClient()
@@ -537,11 +524,11 @@ class TelegramLongTextTests(unittest.TestCase):
 
         self.assertEqual([call[0] for call in client.calls], ["sendMediaGroup", "sendMessage"])
         _, data, _, _ = client.calls[-1]
-        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
+        self.assertLessEqual(len(data["text"]), CAPTION_LIMIT)
         self.assertTrue(data["text"].endswith(CAPTION_CONTINUATION))
         self.assertIn("reply_markup", data)
 
-    def test_plain_long_post_is_truncated_into_single_message(self) -> None:
+    def test_plain_long_post_is_truncated_like_a_caption(self) -> None:
         client = CapturingTelegramClient()
         post = Post(id=13, owner_id=-123, text=self._long_text(), attachments=[])
 
@@ -549,8 +536,9 @@ class TelegramLongTextTests(unittest.TestCase):
 
         self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
         _, data, _, _ = client.calls[0]
-        self.assertLessEqual(len(data["text"]), MESSAGE_LIMIT)
-        self.assertTrue(data["text"].endswith(PLAIN_CONTINUATION))
+        self.assertLessEqual(len(data["text"]), CAPTION_LIMIT)
+        self.assertTrue(data["text"].endswith(CAPTION_CONTINUATION))
+        self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
 
     def test_video_caption_is_truncated_to_caption_limit(self) -> None:
