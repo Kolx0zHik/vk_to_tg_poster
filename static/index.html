@@ -285,6 +285,23 @@
         </div>
     </div>
 
+    <!-- Remove Group Modal -->
+    <div id="removeGroupModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h3>Удаление сообщества</h3>
+            </div>
+            <div class="modal-body">
+                <p>Вы уверены, что хотите удалить «<span id="removeGroupName"></span>» из списка?</p>
+                <p class="modal-warning">Это действие нельзя отменить</p>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelRemoveGroupBtn" class="btn btn-secondary">Отмена</button>
+                <button id="confirmRemoveGroupBtn" class="btn btn-danger">Удалить</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast" class="toast hidden"><span id="toastMessage"></span></div>
 
     <script src="/static/script.js"></script>

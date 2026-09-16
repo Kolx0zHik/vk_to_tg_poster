@@ -433,6 +433,15 @@ input:checked + .slider::before {
     color: var(--text-primary);
 }
 
+.btn-danger {
+    background-color: var(--danger-color);
+    color: var(--primary-text);
+}
+
+.btn-danger:hover {
+    background-color: #dc2626;
+}
+
 /* Groups */
 .header-pill {
     margin-left: auto;
@@ -911,6 +920,12 @@ input:checked + .slider::before {
     flex-direction: column;
     gap: 1rem;
     overflow-y: auto;
+}
+
+.modal-warning {
+    color: var(--danger-color);
+    font-size: 0.875rem;
+    font-weight: 500;
 }
 
 .modal-header h3 {

@@ -52,6 +52,11 @@ document.addEventListener("DOMContentLoaded", () => {
         closeTokensBtn: document.getElementById("closeTokensBtn"),
         projectVersion: document.getElementById("projectVersion"),
 
+        removeGroupModal: document.getElementById("removeGroupModal"),
+        removeGroupName: document.getElementById("removeGroupName"),
+        cancelRemoveGroupBtn: document.getElementById("cancelRemoveGroupBtn"),
+        confirmRemoveGroupBtn: document.getElementById("confirmRemoveGroupBtn"),
+
         toast: document.getElementById("toast"),
         toastMessage: document.getElementById("toastMessage"),
     };
@@ -280,10 +285,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const group = state.communities[state.selected];
         if (!group) return;
         const label = group.name || group.id || "сообщество";
-        if (!window.confirm(`Удалить «${label}» из списка?`)) return;
-        state.communities = state.communities.filter((_, idx) => idx !== state.selected);
-        renderGroups();
-        showToast("Сообщество удалено");
+        openRemoveGroupModal(label);
     }
 
     async function handleStatusChange(active, wasActive) {
@@ -610,6 +612,47 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    function openRemoveGroupModal(label) {
+        if (!els.removeGroupModal || !els.removeGroupName) return;
+        els.removeGroupName.textContent = label;
+        els.removeGroupModal.classList.remove("hidden");
+        els.removeGroupModal.setAttribute("aria-hidden", "false");
+    }
+
+    function closeRemoveGroupModal() {
+        if (!els.removeGroupModal) return;
+        els.removeGroupModal.classList.add("hidden");
+        els.removeGroupModal.setAttribute("aria-hidden", "true");
+    }
+
+    async function confirmRemoveGroup() {
+        const group = state.communities[state.selected];
+        if (!group) return;
+        
+        try {
+            // Вызвать API для удаления сообщества
+            const res = await fetch(`/api/community/${encodeURIComponent(group.id)}`, {
+                method: "DELETE",
+            });
+            
+            if (!res.ok) {
+                const detail = await res.json().catch(() => ({}));
+                showToast(detail?.detail?.message || "Ошибка удаления", true);
+                return;
+            }
+            
+            // Удалить из локального состояния
+            state.communities = state.communities.filter((_, idx) => idx !== state.selected);
+            closeRemoveGroupModal();
+            showToast("Сообщество удалено");
+            
+            // Перезагрузить конфигурацию, чтобы обновить состояние
+            await loadConfig();
+        } catch (err) {
+            showToast("Не удалось удалить сообщество", true);
+        }
+    }
+
     async function loadLogs() {
         try {
             const res = await fetch("/api/logs?lines=50");
@@ -720,8 +763,24 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    if (els.removeGroupModal) {
+        els.removeGroupModal.addEventListener("click", (e) => {
+            if (e.target === els.removeGroupModal) {
+                closeRemoveGroupModal();
+            }
+        });
+    }
+
     if (els.cancelAddGroupBtn) {
         els.cancelAddGroupBtn.addEventListener("click", () => closeAddGroup());
+    }
+
+    if (els.cancelRemoveGroupBtn) {
+        els.cancelRemoveGroupBtn.addEventListener("click", () => closeRemoveGroupModal());
+    }
+
+    if (els.confirmRemoveGroupBtn) {
+        els.confirmRemoveGroupBtn.addEventListener("click", confirmRemoveGroup);
     }
 
     els.addGroupBtn.addEventListener("click", addGroup);
@@ -823,6 +882,7 @@ document.addEventListener("DOMContentLoaded", () => {
             closeLogs();
             closeTokens();
             closeAddGroup();
+            closeRemoveGroupModal();
         }
     });
 

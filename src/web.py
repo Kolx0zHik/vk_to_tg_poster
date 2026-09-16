@@ -358,6 +358,57 @@ async def save_config(payload: SaveRequest) -> dict:
     return {"ok": True}
 
 
+@app.delete("/api/community/{community_id}")
+async def delete_community(community_id: str) -> dict:
+    community_id = _normalize_owner_id(community_id)
+    if not community_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Не указано сообщество", "field": "community_id"},
+        )
+    
+    # Загрузить текущий конфиг
+    current = _read_raw_config(CONFIG_PATH)
+    communities = current.get("communities", [])
+    
+    # Удалить сообщество
+    filtered_communities = [
+        c for c in communities 
+        if _normalize_owner_id(c.get("id", "")) != community_id
+    ]
+    
+    if len(filtered_communities) == len(communities):
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "Сообщество не найдено", "field": "community_id"},
+        )
+    
+    # Сохранить обновленную конфигурацию
+    merged = {
+        "general": current.get("general", {}),
+        "vk": current.get("vk", {}),
+        "telegram": current.get("telegram", {}),
+        "communities": filtered_communities,
+    }
+    
+    try:
+        parse_config_dict(
+            merged,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+        )
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc)},
+        )
+    
+    save_config_dict(merged, CONFIG_PATH)
+    _cleanup_cache(merged)
+    return {"ok": True, "deleted_id": community_id}
+
+
 @app.get("/api/community_info")
 async def community_info(value: str) -> dict:
     try:
