@@ -119,7 +119,7 @@ def _build_video_caption(
     post_text: str = "",
     max_len: int = CAPTION_LIMIT,
 ) -> str:
-    parts = [f'<a href="{_escape_html(link_url)}">Видео: {link_text}</a>']
+    parts = [f'🎬 <a href="{_escape_html(link_url)}">{link_text}</a>']
     if stats_text:
         parts.append(stats_text)
     header = "\n".join(parts)
@@ -336,15 +336,13 @@ class TelegramClient:
         # Видео/аудио
         for video in videos:
             stats_parts = []
-            if video.views is not None:
-                stats_parts.append(f"Просмотры: {video.views}")
             if video.likes is not None:
                 stats_parts.append(f"Лайки: {video.likes}")
             stats_text = " | ".join(stats_parts)
 
             link_url = video.url or vk_url
             base_text = post.text if (allowed.text and post.text and not text_used) else ""
-            link_text = _escape_html(video.title) if video.title else "Видео"
+            link_text = _escape_html(video.title) if video.title else "Смотреть в VK"
             if link_url:
                 text_body = _build_video_caption(link_url, link_text, stats_text, base_text)
                 if video.preview_url:

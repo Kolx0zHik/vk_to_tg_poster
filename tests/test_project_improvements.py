@@ -541,7 +541,7 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertEqual(data["parse_mode"], "HTML")
         self.assertIn("reply_markup", data)
 
-    def test_video_is_sent_as_link_with_stats(self) -> None:
+    def test_video_is_sent_as_link_with_likes_without_views(self) -> None:
         client = CapturingTelegramClient()
         post = Post(
             id=11,
@@ -557,7 +557,7 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertEqual([call[0] for call in client.calls], ["sendMessage"])
         _, data, _, _ = client.calls[0]
         self.assertEqual(data["parse_mode"], "HTML")
-        self.assertIn("Просмотры: 10", data["text"])
+        self.assertNotIn("Просмотры", data["text"])
         self.assertIn("Лайки: 2", data["text"])
         self.assertIn("https://example.com/video.mp4", data["text"])
         self.assertIn("Короткий текст поста", data["text"])
@@ -587,9 +587,10 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertNotIn("photo", data)
         self.assertEqual(files["photo"][1], b"image-bytes")
         self.assertEqual(data["parse_mode"], "HTML")
+        self.assertIn("🎬", data["caption"])
         self.assertIn("Видео от Сергея Швырева", data["caption"])
         self.assertIn("https://vk.com/video11411764_171498668?access_key=key", data["caption"])
-        self.assertIn("Просмотры: 534", data["caption"])
+        self.assertNotIn("Просмотры", data["caption"])
         self.assertIn("Открыть пост в VK", data.get("reply_markup", ""))
 
     def test_video_preview_caption_keeps_link_before_truncated_text(self) -> None:
@@ -615,8 +616,8 @@ class TelegramLongTextTests(unittest.TestCase):
         _, data, _, _ = client.calls[0]
         caption = data["caption"]
         self.assertLessEqual(len(caption), CAPTION_LIMIT)
-        self.assertTrue(caption.startswith('<a href="https://vk.com/video-123_456">Видео: Тест</a>'))
-        self.assertIn("Просмотры: 100", caption)
+        self.assertTrue(caption.startswith('🎬 <a href="https://vk.com/video-123_456">Тест</a>'))
+        self.assertNotIn("Просмотры", caption)
         self.assertIn(CAPTION_CONTINUATION, caption)
 
     def test_video_with_vk_player_url_is_sent_as_link(self) -> None:
@@ -641,7 +642,7 @@ class TelegramLongTextTests(unittest.TestCase):
         _, data, _, _ = client.calls[0]
         self.assertIn("Моё видео", data["text"])
         self.assertIn("https://vk.com/video-123_456", data["text"])
-        self.assertIn("Просмотры: 100", data["text"])
+        self.assertNotIn("Просмотры", data["text"])
 
     def test_video_without_url_uses_vk_link(self) -> None:
         client = CapturingTelegramClient()
