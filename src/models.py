@@ -9,6 +9,7 @@ class Attachment:
     title: Optional[str] = None
     likes: Optional[int] = None
     views: Optional[int] = None
+    preview_url: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -21,6 +22,7 @@ class Attachment:
             title=raw.get("title"),
             likes=raw.get("likes"),
             views=raw.get("views"),
+            preview_url=raw.get("preview_url"),
         )
 
 

@@ -563,6 +563,35 @@ class TelegramLongTextTests(unittest.TestCase):
         self.assertIn("Короткий текст поста", data["text"])
         self.assertIn("Открыть пост в VK", data.get("reply_markup", ""))
 
+    def test_video_with_preview_is_sent_as_photo_with_caption(self) -> None:
+        client = CapturingTelegramClient()
+        post = Post(
+            id=11,
+            owner_id=-123,
+            text="",
+            attachments=[
+                Attachment(
+                    type="video",
+                    url="https://vk.com/video11411764_171498668?access_key=key",
+                    title="Видео от Сергея Швырева",
+                    views=534,
+                    preview_url="https://sun.example.com/video.jpg",
+                )
+            ],
+        )
+
+        client.send_post(post, ContentTypes())
+
+        self.assertEqual([call[0] for call in client.calls], ["sendPhoto"])
+        _, data, _, files = client.calls[0]
+        self.assertNotIn("photo", data)
+        self.assertEqual(files["photo"][1], b"image-bytes")
+        self.assertEqual(data["parse_mode"], "HTML")
+        self.assertIn("Видео от Сергея Швырева", data["caption"])
+        self.assertIn("https://vk.com/video11411764_171498668?access_key=key", data["caption"])
+        self.assertIn("Просмотры: 534", data["caption"])
+        self.assertIn("Открыть пост в VK", data.get("reply_markup", ""))
+
     def test_video_with_vk_player_url_is_sent_as_link(self) -> None:
         client = CapturingTelegramClient()
         post = Post(
@@ -873,6 +902,51 @@ class VKClientRequestTests(unittest.TestCase):
 
         self.assertEqual(state["n"], 2)
         self.assertTrue(any(call.args and call.args[0] > 0 for call in mock_sleep.call_args_list))
+
+    def test_fetch_posts_keeps_video_preview(self) -> None:
+        client, _ = self._make_client(
+            [
+                FakeHTTPResponse(
+                    {
+                        "response": {
+                            "items": [
+                                {
+                                    "id": 1,
+                                    "owner_id": -123,
+                                    "attachments": [
+                                        {
+                                            "type": "video",
+                                            "video": {
+                                                "id": 2,
+                                                "owner_id": -123,
+                                                "title": "Видео",
+                                                "player": "https://vk.com/video-123_2",
+                                                "image": [
+                                                    {
+                                                        "url": "https://example.com/small.jpg",
+                                                        "width": 130,
+                                                        "height": 96,
+                                                    },
+                                                    {
+                                                        "url": "https://example.com/big.jpg",
+                                                        "width": 800,
+                                                        "height": 450,
+                                                    },
+                                                ],
+                                            },
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                )
+            ]
+        )
+
+        posts = client.fetch_posts(-123)
+
+        self.assertEqual(posts[0].attachments[0].preview_url, "https://example.com/big.jpg")
 
 
 class TelegramMediaFallbackTests(unittest.TestCase):

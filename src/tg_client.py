@@ -327,12 +327,20 @@ class TelegramClient:
                 text_body_parts = []
                 if base_text:
                     text_body_parts.append(_escape_html(base_text))
-                link_html = f'<a href="{link_url}">{link_text}</a>'
+                link_html = f'<a href="{_escape_html(link_url)}">{link_text}</a>'
                 text_body_parts.append(link_html)
                 if stats_text:
                     text_body_parts.append(stats_text)
                 text_body = "\n\n".join(text_body_parts)
-                self.send_text(text_body, vk_url=vk_url, parse_mode="HTML", disable_preview=False)
+                if video.preview_url:
+                    self.send_photo(
+                        video.preview_url,
+                        caption=_truncate_text(text_body),
+                        vk_url=vk_url,
+                        parse_mode="HTML",
+                    )
+                else:
+                    self.send_text(text_body, vk_url=vk_url, parse_mode="HTML", disable_preview=False)
                 text_used = text_used or bool(base_text)
             else:
                 residual = [link_text]

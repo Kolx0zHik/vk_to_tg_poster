@@ -126,6 +126,16 @@ class VKClient:
                     return val
                 return None
 
+            def _largest_image_url(images):
+                if not images:
+                    return None
+                images = sorted(
+                    images,
+                    key=lambda s: (s.get("width") or 0) * (s.get("height") or 0),
+                    reverse=True,
+                )
+                return images[0].get("url") or None
+
             if att_type == "photo":
                 sizes = data.get("sizes", [])
                 if sizes:
@@ -146,6 +156,8 @@ class VKClient:
                         title=data.get("title"),
                         likes=_count(data.get("likes")),
                         views=_count(data.get("views")),
+                        preview_url=_largest_image_url(data.get("image"))
+                        or _largest_image_url(data.get("first_frame")),
                     )
                 )
             elif att_type == "audio":
