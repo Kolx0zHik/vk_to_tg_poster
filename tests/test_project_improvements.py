@@ -38,6 +38,12 @@ def _install_test_stubs() -> None:
 
                 return decorator
 
+            def delete(self, *args, **kwargs):
+                def decorator(func):
+                    return func
+
+                return decorator
+
         fastapi.FastAPI = FastAPI
         fastapi.HTTPException = HTTPException
         sys.modules["fastapi"] = fastapi
@@ -1199,6 +1205,63 @@ class SaveConfigNormalizationTests(unittest.TestCase):
             with patch.object(web, "CONFIG_PATH", config_path):
                 with self.assertRaises(HTTPException):
                     asyncio.run(web.save_config(payload))
+
+
+class DeleteCommunityTests(unittest.TestCase):
+    @staticmethod
+    def _seed(config_path: Path) -> None:
+        import yaml
+
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "general": {"cron": "*/10 * * * *"},
+                    "vk": {"token": ""},
+                    "telegram": {"channel_id": "@channel", "bot_token": ""},
+                    "communities": [
+                        {"id": "-232948281", "name": "A", "active": True},
+                        {"id": "-555000", "name": "B", "active": True},
+                    ],
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def test_delete_removes_community_and_persists(self) -> None:
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            self._seed(config_path)
+            with patch.object(web, "CONFIG_PATH", config_path):
+                result = asyncio.run(web.delete_community("-232948281"))
+
+            self.assertEqual(result["deleted_id"], "-232948281")
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual([c["id"] for c in data["communities"]], ["-555000"])
+
+    def test_delete_normalizes_id_before_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            self._seed(config_path)
+            with patch.object(web, "CONFIG_PATH", config_path):
+                result = asyncio.run(web.delete_community("club232948281"))
+
+            self.assertEqual(result["deleted_id"], "-232948281")
+
+    def test_delete_missing_community_raises_404(self) -> None:
+        from fastapi import HTTPException
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            self._seed(config_path)
+            with patch.object(web, "CONFIG_PATH", config_path):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(web.delete_community("-999999"))
+
+            self.assertEqual(ctx.exception.status_code, 404)
 
 
 class VkRuCommunityTestCase(unittest.TestCase):
