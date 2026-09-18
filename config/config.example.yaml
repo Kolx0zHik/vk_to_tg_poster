@@ -17,6 +17,7 @@ general:
 llm:
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
+  prompt: ""
 vk: {}
 telegram:
   channel_id: ""

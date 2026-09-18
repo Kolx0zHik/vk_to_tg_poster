@@ -73,6 +73,7 @@ class TelegramModel(BaseModel):
 class LLMModel(BaseModel):
     base_url: str = ""
     model: str = ""
+    prompt: str = ""
 
 
 class ContentTypesModel(BaseModel):
@@ -353,6 +354,7 @@ async def save_config(payload: SaveRequest) -> dict:
         "llm": {
             "base_url": payload.llm.base_url.strip(),
             "model": payload.llm.model.strip(),
+            "prompt": payload.llm.prompt,
         },
         "communities": communities,
     }

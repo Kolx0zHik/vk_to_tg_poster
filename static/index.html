@@ -278,6 +278,14 @@
                 </div>
 
                 <div class="form-group">
+                    <span class="label-text">
+                        Промпт для ИИ
+                        <small>Инструкции, по которым модель определяет дубль. Пусто — встроенный по умолчанию.</small>
+                    </span>
+                    <textarea id="aiPrompt" rows="8" placeholder="Ты — помощник по удалению дубликатов..."></textarea>
+                </div>
+
+                <div class="form-group">
                     <span class="hint">Ключ API задаётся в файле <code>.env</code> рядом с конфигом — переменная
                         <code>LLM_API_KEY</code>.</span>
                 </div>

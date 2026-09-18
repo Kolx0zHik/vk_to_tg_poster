@@ -23,7 +23,7 @@ LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 LLM_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 
-SYSTEM_PROMPT = """Ты — помощник по удалению дубликатов постов в Telegram-канале.
+DEFAULT_SYSTEM_PROMPT = """Ты — помощник по удалению дубликатов постов в Telegram-канале.
 Сравнивай новый пост с кандидатами и решай, является ли он дубликатом по смыслу.
 
 Правила:
@@ -108,12 +108,16 @@ def _parse_result(raw: dict) -> DedupResult:
 class SemanticDedup:
     """Client for the semantic duplicate checker."""
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", timeout: int = LLM_TIMEOUT):
+    def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.prompt = prompt.strip()
         self.timeout = timeout
         self.session = requests.Session()
+
+    def _system_prompt(self) -> str:
+        return self.prompt or DEFAULT_SYSTEM_PROMPT
 
     def _is_configured(self) -> bool:
         return bool(self.base_url and self.model and self.api_key)
@@ -155,7 +159,7 @@ class SemanticDedup:
             raise DedupError("LLM не настроен: задайте base_url, model и LLM_API_KEY")
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": _build_user_prompt(new_post, candidates)},
         ]
         try:

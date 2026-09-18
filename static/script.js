@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
         aiBaseUrl: document.getElementById("aiBaseUrl"),
         aiModel: document.getElementById("aiModel"),
         aiWindow: document.getElementById("aiWindow"),
+        aiPrompt: document.getElementById("aiPrompt"),
 
         newGroupInput: document.getElementById("newGroupInput"),
         addGroupBtn: document.getElementById("addGroupBtn"),
@@ -340,6 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
             llm: {
                 base_url: els.aiBaseUrl.value.trim(),
                 model: els.aiModel.value.trim(),
+                prompt: els.aiPrompt.value.trim(),
             },
             communities,
         };
@@ -413,6 +415,7 @@ document.addEventListener("DOMContentLoaded", () => {
             els.aiWindow.value = dedup.window_days || 4;
             els.aiBaseUrl.value = data.llm?.base_url || "";
             els.aiModel.value = data.llm?.model || "";
+            els.aiPrompt.value = data.llm?.prompt || "";
 
             state.selected = 0;
             state.query = "";

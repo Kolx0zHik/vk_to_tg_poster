@@ -49,6 +49,7 @@ class TelegramSettings:
 class LLMSettings:
     base_url: str = ""
     model: str = ""
+    prompt: str = ""
 
 
 @dataclass
@@ -189,6 +190,7 @@ def _parse_llm(raw: Dict) -> LLMSettings:
     return LLMSettings(
         base_url=str(raw.get("base_url", "") or "").strip(),
         model=str(raw.get("model", "") or "").strip(),
+        prompt=str(raw.get("prompt", "") or ""),
     )
 
 
@@ -280,7 +282,7 @@ def config_to_dict(config: Config) -> Dict:
         },
         "vk": {},
         "telegram": {"channel_id": config.telegram.channel_id},
-        "llm": {"base_url": config.llm.base_url, "model": config.llm.model},
+        "llm": {"base_url": config.llm.base_url, "model": config.llm.model, "prompt": config.llm.prompt},
         "communities": [
             {
                 "id": community.id,

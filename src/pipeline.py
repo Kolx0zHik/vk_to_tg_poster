@@ -329,6 +329,7 @@ def process_communities(
                 base_url=config.llm.base_url,
                 model=config.llm.model,
                 api_key=os.getenv("LLM_API_KEY", ""),
+                prompt=config.llm.prompt,
             )
         _publish_pending(
             cache,

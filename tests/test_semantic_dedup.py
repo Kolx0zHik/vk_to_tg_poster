@@ -66,7 +66,7 @@ class ConfigSecretsAndLlmTests(unittest.TestCase):
                 "general": {"semantic_dedup": {"enabled": True, "window_days": 7}},
                 "vk": {"token": "old-vk"},
                 "telegram": {"channel_id": "@ch", "bot_token": "old-tg"},
-                "llm": {"base_url": "https://api.example.com/v1", "model": "model-x"},
+                "llm": {"base_url": "https://api.example.com/v1", "model": "model-x", "prompt": "custom prompt"},
                 "communities": [{"id": "club1", "name": "One"}],
             },
             require_tokens=False,
@@ -76,6 +76,7 @@ class ConfigSecretsAndLlmTests(unittest.TestCase):
         self.assertEqual(cfg.telegram.channel_id, "@ch")
         self.assertEqual(cfg.llm.base_url, "https://api.example.com/v1")
         self.assertEqual(cfg.llm.model, "model-x")
+        self.assertEqual(cfg.llm.prompt, "custom prompt")
         self.assertTrue(cfg.general.semantic_dedup.enabled)
         self.assertEqual(cfg.general.semantic_dedup.window_days, 7)
         self.assertFalse(hasattr(cfg.vk, "token"))
@@ -100,6 +101,7 @@ class ConfigSecretsAndLlmTests(unittest.TestCase):
         self.assertNotIn("bot_token", data["telegram"])
         self.assertIn("semantic_dedup", data["general"])
         self.assertIn("llm", data)
+        self.assertIn("prompt", data["llm"])
 
 
 class CachePublishedTextTests(unittest.TestCase):
@@ -217,6 +219,44 @@ class DedupClientTests(unittest.TestCase):
 
         with self.assertRaises(DedupError):
             client.check({}, [])
+
+    def test_custom_prompt_is_used(self) -> None:
+        sent_payloads: list[dict] = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent_payloads.append(json)
+            return FakeLLMResponse(
+                200,
+                _completion('{"is_duplicate":false,"reason":"Нет","matched_message_id":""}'),
+            )
+
+        client = SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="Мой промпт")
+        client.session.post = fake_post
+
+        client.check({}, [])
+
+        self.assertEqual(len(sent_payloads), 1)
+        system_msg = sent_payloads[0]["messages"][0]
+        self.assertEqual(system_msg["role"], "system")
+        self.assertEqual(system_msg["content"], "Мой промпт")
+
+    def test_default_prompt_used_when_empty(self) -> None:
+        sent_payloads: list[dict] = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent_payloads.append(json)
+            return FakeLLMResponse(
+                200,
+                _completion('{"is_duplicate":false,"reason":"Нет","matched_message_id":""}'),
+            )
+
+        client = self._client()
+        client.session.post = fake_post
+
+        client.check({}, [])
+
+        system_msg = sent_payloads[0]["messages"][0]
+        self.assertIn("Дубликат = тот же инфоповод", system_msg["content"])
 
     def test_extract_json_rejects_garbage(self) -> None:
         with self.assertRaises(DedupError):
