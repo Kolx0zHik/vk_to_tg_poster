@@ -11,9 +11,13 @@ general:
   blocked_keywords: []
   refresh_avatars: true
   log_retention_days: 2
-vk:
-  token: ""
+  semantic_dedup:
+    enabled: false
+    window_days: 4
+llm:
+  base_url: "https://openrouter.ai/api/v1"
+  model: "inclusionai/ling-3.0-flash-sante:free"
+vk: {}
 telegram:
   channel_id: ""
-  bot_token: ""
 communities: []

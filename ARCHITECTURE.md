@@ -1,6 +1,6 @@
 # Архитектура
 
-Документ описывает, как сервис устроен сейчас (версия 1.1.13). Принятые решения и их причины — в
+Документ описывает, как сервис устроен сейчас (версия 1.1.14). Принятые решения и их причины — в
 [DECISIONS.md](./DECISIONS.md); текущее состояние и известные проблемы — в [STATE.md](./STATE.md).
 
 ## 1. Общая схема
@@ -29,12 +29,14 @@
 | Модуль | Ответственность | Ключевые сущности |
 |---|---|---|
 | `src/main.py` | запуск, режимы `once`/`scheduled`, цикл по cron | `run_job`, `run_with_scheduler`, `main` |
-| `src/pipeline.py` | рабочий процесс публикации | `process_communities`, `_resolve_owner_id`, `_fetch_recent`, `_record_fetched`, `_publish_pending`, `_apply_backfill` |
+| `src/pipeline.py` | рабочий процесс публикации | `process_communities`, `_resolve_owner_id`, `_fetch_recent`, `_record_fetched`, `_publish_pending`, `_apply_backfill`, `_dedup_check` |
 | `src/vk_client.py` | VK API: посты, разбор вложений, разрешение screen name | `VKClient.fetch_posts`, `resolve_screen_name`, троттлинг `VK_REQUEST_INTERVAL=0.34`, ретраи `VK_MAX_RETRIES=2` |
 | `src/tg_client.py` | доставка в Telegram | `TelegramClient.send_post` и `send_text/photo/video/audio/media_group/link` |
-| `src/cache.py` | состояние публикаций (JSON, schema v2) | `Cache.record_post`, `pending_posts`, `mark_published/skipped/failed`, `set_baseline`, `get/set_owner_id` |
+| `src/cache.py` | состояние публикаций (JSON, schema v2) | `Cache.record_post`, `pending_posts`, `mark_published/skipped/failed`, `published_candidates`, `prune_published_text`, `set_baseline`, `get/set_owner_id` |
+| `src/dedup.py` | семантическая проверка дублей через LLM | `SemanticDedup.check`, `DedupResult`, `DedupError` (OpenAI-совместимый `/chat/completions`) |
 | `src/backfill.py` | заявки на дозаливку и возобновление | `BackfillRequests`, `compute_baseline`, `requests_path_for` |
-| `src/config.py` | схема и (де)сериализация YAML | `load_config`, `parse_config_dict`, `config_to_dict`, `save_config_dict`, `ConfigError` |
+| `src/config.py` | схема и (де)сериализация YAML | `load_config`, `parse_config_dict`, `config_to_dict`, `save_config_dict`, `ConfigError`, `SemanticDedupSettings`, `LLMSettings` |
+| `src/envfile.py` | загрузка секретов из `.env` рядом с конфигом | `load_env_file`, `env_file_path` |
 | `src/web.py` | веб-панель и API | эндпоинты ниже, `_load_ui_config`, `_fetch_vk_info`, `_normalize_owner_id` |
 | `src/vk_ids.py` | нормализация VK-ссылок и id без сети | `normalize_community_key`, `parse_owner_id`, `normalize_display_id` |
 | `src/logger.py` | логи, маскирование секретов, retention | `configure_logging`, `redact_secrets`, `RedactingFormatter`, `CompactFileFormatter` |
@@ -51,14 +53,16 @@
 4. `_fetch_recent` — страницы постов, максимум `MAX_FETCH_PAGES=5`, размер страницы `min(10, posts_limit)`, пока не поймает известные посты.
 5. `_record_fetched` — посты в порядке «старые → новые» пишутся в кэш: `new` / `known` / `baseline` (пропущен как уже пройденный).
 6. `_publish_pending` — публикация не более `posts_limit` постов за цикл, старые первыми; заблокированные словами и запрещёнными типами помечаются `skipped`; ошибки → `pending` с повтором, после `PENDING_MAX_ATTEMPTS=5` → `dead`.
-7. Итоговая строка `info`: `fetched/new/published/known/blocked/skipped_by_type/failed/pending/backfill`.
+   - при включённой семантической проверке (`general.semantic_dedup.enabled`) каждый пост с непустым текстом сравнивается с пулом опубликованных постов за окно (`cache.published_candidates`); вердикт «дубль» → `skipped` и счётчик `dedup_skipped`. Любая ошибка LLM — fail-open: пост публикуется как обычно.
+7. Итоговая строка `info`: `fetched/new/published/known/blocked/skipped_by_type/dedup_skipped/failed/pending/backfill`.
 
 Инварианты (не ломать):
 
 - новые посты забираются «сверху», публикуются «снизу» (старые первыми);
 - приоритет дедупликации — оригинал репоста (`copy_history` → `source_owner_id/source_post_id`);
 - baseline/`last_seen` сдвигается даже для пропущенных постов, иначе цикл зациклится;
-- отсутствие токенов/канала не роняет планировщик — запуск пропускается с предупреждением.
+- отсутствие токенов/канала не роняет планировщик — запуск пропускается с предупреждением;
+- семантическая проверка никогда не блокирует публикацию при сбое (fail-open) и не трогает посты без текста.
 
 ## 4. Доставка в Telegram (`src/tg_client.py`)
 
@@ -94,7 +98,9 @@
   "posts": {
     "-123_456": { "status": "pending|published|skipped|dead", "owner_id": -123,
                   "post_id": 456, "date": 1757000000, "attempts": 0, "ts": 1757000001,
-                  "payload": { "...Post..." } }
+                  "payload": { "...Post..." } },
+    "-123_457": { "status": "published", "owner_id": -123, "post_id": 457, "date": 1757000100,
+                  "attempts": 0, "ts": 1757000101, "text": "текст поста для ИИ-проверки" }
   },
   "communities": { "-123": { "baseline_date": 1757000000, "baseline_post_id": 456 } },
   "owner_ids": { "club123": { "owner_id": -123, "ts": 1757000000 } }
@@ -103,10 +109,17 @@
 
 - ключ поста — `Post.dedup_key` = `<owner>_<post>` (для репоста — оригинал), **глобально**, не по сообществам;
 - `baseline` = «всё, что ≤ (date, post_id), уже обработано» — основа и миграции, и дозаливки, и паузы;
-- записи со статусом `published/skipped/dead` не содержат `payload` (payload хранится только у `pending`);
+- записи со статусом `published` дополнительно хранят `text` (до `PublishedText.MAX_LEN=1000` символов) — это пул кандидатов для семантической проверки; `payload` остаётся только у `pending`, у `skipped/dead` его нет;
+- `published_candidates(since_ts, limit)` отдаёт опубликованные посты с текстом за окно (по умолчанию 20 новейших), `prune_published_text(window_days)` снимает текст у записей старше окна, не трогая ключи дедупликации;
 - миграция со старой схемы (`dedup`/`last_seen`) делается на лету в `Cache._migrate_legacy`, перед перезаписью создаётся `cache.json.v1.bak`;
 - запись атомарная: `*.tmp` + `fsync` + `os.replace`;
 - `owner_ids` живут 30 дней (`OWNER_ID_TTL`), чистятся при загрузке.
+
+### `.env` (принадлежит человеку, читается обоими процессами)
+
+Секреты вне конфига: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`. Файл лежит рядом с `CONFIG_PATH`
+(`env_file_path`), читается `load_env_file` при старте `src.main` и `src.web`; уже заданные переменные
+окружения имеют приоритет. Токены из `config.yaml` не читаются вообще.
 
 ### `backfill.json` (принадлежит вебу, читает планировщик)
 
@@ -136,8 +149,14 @@ general:
   blocked_keywords: []          # фильтр по тексту и заголовкам вложений
   refresh_avatars: true
   log_retention_days: 2
-vk: { token: "" }               # перекрывается VK_API_TOKEN
-telegram: { channel_id: "", bot_token: "" }   # bot_token перекрывается TELEGRAM_BOT_TOKEN
+  semantic_dedup:
+    enabled: false              # ИИ-проверка дублей перед публикацией
+    window_days: 4              # окно поиска кандидатов
+llm:                            # не секрет: base_url и модель задаются из панели
+  base_url: "https://openrouter.ai/api/v1"
+  model: "inclusionai/ling-3.0-flash-sante:free"
+vk: {}                          # секретов в конфиге нет
+telegram: { channel_id: "" }    # токен бота — только в .env
 communities:
   - id: "-232948281"            # числовой id, либо screen name — см. vk_ids
     name: "Суетологи"           # только для отображения
@@ -146,6 +165,9 @@ communities:
 ```
 
 - запись конфига атомарная (`save_config_dict`), ошибки разбора — `ConfigError` с человекочитаемым текстом;
+- секретов в конфиге нет: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` читаются только из `.env`/окружения;
+- ключ LLM (`LLM_API_KEY`) в панели не редактируется — только `base_url` и `model`;
+- проверка дублей выключена по умолчанию и включается тумблером в модалке «ИИ-проверка»; при включении без ключа/URL/модели проверка пропускается (fail-open);
 - `POST /api/config` нормализует `communities[].id` через `normalize_display_id` и отклоняет дубли;
 - код по умолчанию считает `audio: true` (`ContentTypes`), интерфейс записывает `audio: false` — это осознанный
   разнобой, см. [STATE.md](./STATE.md).
@@ -155,22 +177,24 @@ communities:
 | Метод | Путь | Назначение | Тело/ответ |
 |---|---|---|---|
 | GET | `/` | веб-панель | `static/index.html` |
-| GET | `/api/config` | конфиг для UI | `general`, `vk.token_set`, `telegram.{channel_id,bot_token_set}`, `communities[]`, `avatar_cache{}`, `version` |
-| POST | `/api/config` | сохранить конфиг | `SaveRequest`; пустой токен = «оставить текущий», id нормализуются, дубли → 400 |
+| GET | `/api/config` | конфиг для UI | `general` (в т.ч. `semantic_dedup`), `llm.{base_url,model}`, `vk.token_set`, `telegram.{channel_id,bot_token_set}`, `llm_api_key_set`, `communities[]`, `avatar_cache{}`, `version` |
+| POST | `/api/config` | сохранить конфиг | `SaveRequest` (`general`, `telegram.channel_id`, `llm`, `communities`); секреты не принимаются, id нормализуются, дубли → 400 |
 | DELETE | `/api/community/{community_id}` | удалить сообщество из конфига | id нормализуется (`_normalize_owner_id`), запись удаляется и конфиг сохраняется сразу; 404 — сообщества нет, 400 — ошибка разбора; ответ `{ok, deleted_id}`; `cache.json` не трогается |
 | GET | `/api/community_info?value=` | имя/аватар сообщества | `{id, name, photo}`; нужен VK-токен, кэш 24 ч, при сбое — `{id: value, name: "", photo: null}` |
 | POST | `/api/backfill` | заявка на дозаливку | `{id, mode: none|posts|days, value}`; `posts` ≤ 100, `days` ≤ 365 |
 | GET | `/api/logs?lines=N` | хвост лога | `{lines: [...]}` с замаскированными секретами |
 
-Валидация — Pydantic-модели (`GeneralModel`, `CommunityModel`, `SaveRequest`, `BackfillModel`), они должны
+Валидация — Pydantic-модели (`GeneralModel`, `SemanticDedupModel`, `LLMModel`, `CommunityModel`, `SaveRequest`, `BackfillModel`), они должны
 оставаться синхронными с dataclass-схемой `src/config.py`.
 
 ## 8. Веб-панель (`static/`)
 
 Одна страница, ванильный JS, состояние в объекте `state`:
 
-- шапка: кнопки «Токены» и «Логи» — обе открывают модальные окна;
-- «Основные настройки» — отдельная карточка с общей кнопкой «Сохранить»;
+- шапка: кнопки «ИИ-проверка» и «Логи» — обе открывают модальные окна; модалки «Токены» больше нет;
+- «ИИ-проверка» — тумблер включения, `base_url`, `model` и окно сравнения (`window_days`); подсказка, что ключ
+  `LLM_API_KEY` задаётся в `.env`;
+- «Основные настройки» — отдельная карточка с общей кнопкой «Сохранить»; там же поле «Telegram канал»;
 - «Отслеживаемые группы» — панель «список + настройки»: слева поиск и список (без ID и без ссылок),
   справа статус сегментом «Активно/На паузе», типы контента иконками, ссылка на сообщество в заголовке;
 - «Только новые» из модалки добавления и снятие с паузы отправляют `POST /api/backfill`;
@@ -208,3 +232,9 @@ Dockerfile многоступенчатый: зависимости ставят
   альбом больше 10 медиа по-прежнему не разбивается — см. STATE.
 - Секреты маскируются только на уровне форматтеров логов и `/api/logs`; в файле, который писался до
   1.0.0, токен мог остаться — см. [STATE.md](./STATE.md).
+- Секреты живут только в `.env`/окружении; не добавляйте `token`/`bot_token` обратно в `config.yaml` и не
+  пишите их из веба. Приложение читает `.env` рядом с конфигом, явные env-переменные важнее файла.
+- ИИ-проверка дублей — совещательная: она только помечает пост `skipped`. При недоступном LLM, пустых
+  `base_url`/`model` или отсутствии `LLM_API_KEY` публикация продолжается как обычно (fail-open). Пул
+  кандидатов берётся из `text`, сохранённого при публикации; текст старше `window_days` вычищается, чтобы
+  `cache.json` не разрастался.

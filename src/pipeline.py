@@ -1,10 +1,12 @@
 import logging
+import os
 import time
 from typing import List
 
 from .backfill import MAX_BACKFILL_POSTS, BackfillRequests, compute_baseline, normalize_mode
 from .cache import Cache
 from .config import Config, ContentTypes
+from .dedup import DedupError, SemanticDedup
 from .models import Post
 from .tg_client import TelegramClient
 from .vk_client import VKClient
@@ -95,6 +97,54 @@ def _record_fetched(cache: Cache, owner_id: int, fetched: List[Post], stats: dic
             stats["known"] += 1
 
 
+def _post_text(post: Post) -> str:
+    """Raw text used for semantic comparison (attachments' titles too)."""
+    parts = [post.text or ""]
+    for att in post.attachments:
+        if att.title:
+            parts.append(att.title)
+    return "\n".join(p for p in parts if p.strip()).strip()
+
+
+def _candidate_pool(cache: Cache, window_days: int, limit: int = 20) -> List[dict]:
+    """Published posts within the window as candidates for the LLM."""
+    since_ts = int(time.time()) - max(1, window_days) * 86400
+    return cache.published_candidates(since_ts, limit=limit)
+
+
+def _dedup_check(
+    post: Post,
+    owner_id: int,
+    cache: Cache,
+    dedup: SemanticDedup,
+    window_days: int,
+) -> tuple[bool, str]:
+    """Return (is_duplicate, reason) for a post against the candidate pool.
+
+    Fail-open: on any error we log a warning and treat the post as NOT a
+    duplicate so publication is never blocked by the checker.
+    """
+    candidates = _candidate_pool(cache, window_days)
+    if not candidates:
+        return False, ""
+
+    new_post = {
+        "chat_id": str(owner_id),
+        "message_id": str(post.id),
+        "date_unix": post.date or 0,
+        "raw_text": _post_text(post),
+    }
+    try:
+        result = dedup.check(new_post, candidates)
+    except DedupError as exc:
+        logger.warning("Семантическая проверка пропущена (%s): %s", post.id, exc)
+        return False, ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Семантическая проверка не удалась (%s): %s", post.id, exc)
+        return False, ""
+    return result.is_duplicate, result.reason
+
+
 def _publish_pending(
     cache: Cache,
     owner_id: int,
@@ -103,6 +153,7 @@ def _publish_pending(
     general,
     max_per_poll: int,
     stats: dict,
+    dedup: SemanticDedup | None = None,
 ) -> None:
     for key, post in cache.pending_posts(owner_id, limit=max_per_poll):
         if _contains_blocked(post, general.blocked_keywords):
@@ -113,6 +164,14 @@ def _publish_pending(
             cache.mark_skipped(key)
             stats["skipped_by_type"] += 1
             continue
+        window_days = general.semantic_dedup.window_days
+        if general.semantic_dedup.enabled and dedup is not None and _post_text(post).strip():
+            is_dup, reason = _dedup_check(post, owner_id, cache, dedup, window_days)
+            if is_dup:
+                cache.mark_skipped(key)
+                stats["dedup_skipped"] += 1
+                logger.info("Пост %s из %s — дубль, пропущен (%s)", post.id, community.name, reason)
+                continue
         try:
             tg_client.send_post(post, community.content_types)
         except Exception as exc:  # noqa: BLE001
@@ -234,6 +293,7 @@ def process_communities(
             "known": 0,
             "blocked": 0,
             "skipped_by_type": 0,
+            "dedup_skipped": 0,
             "failed": 0,
             "backfill": 0,
         }
@@ -257,14 +317,34 @@ def process_communities(
             logger.error("Не удалось получить посты для %s: %s", community.name, exc)
             continue
 
+        if config.general.semantic_dedup.enabled:
+            cache.prune_published_text(config.general.semantic_dedup.window_days)
+
         stats["fetched"] = len(fetched)
         _record_fetched(cache, owner_id, fetched, stats)
-        _publish_pending(cache, owner_id, community, tg_client, config.general, max_per_poll, stats)
+
+        dedup = None
+        if config.general.semantic_dedup.enabled:
+            dedup = SemanticDedup(
+                base_url=config.llm.base_url,
+                model=config.llm.model,
+                api_key=os.getenv("LLM_API_KEY", ""),
+            )
+        _publish_pending(
+            cache,
+            owner_id,
+            community,
+            tg_client,
+            config.general,
+            max_per_poll,
+            stats,
+            dedup=dedup,
+        )
 
         pending_left = len(cache.pending_posts(owner_id))
         logger.info(
             "Сообщество %s: fetched=%s new=%s published=%s known=%s blocked=%s "
-            "skipped_by_type=%s failed=%s pending=%s backfill=%s",
+            "skipped_by_type=%s dedup_skipped=%s failed=%s pending=%s backfill=%s",
             community.name,
             stats["fetched"],
             stats["new"],
@@ -272,6 +352,7 @@ def process_communities(
             stats["known"],
             stats["blocked"],
             stats["skipped_by_type"],
+            stats["dedup_skipped"],
             stats["failed"],
             pending_left,
             stats["backfill"],

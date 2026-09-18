@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .backfill import BackfillRequests, requests_path_for
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
+from .envfile import load_env_file
 from .logger import redact_secrets
 from .version import get_version
 from .vk_ids import normalize_display_id
@@ -27,10 +28,17 @@ AVATAR_TTL_SECONDS = 24 * 3600
 app = FastAPI(title="VK → Telegram Poster", version=get_version())
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
+load_env_file(CONFIG_PATH)
+
 
 class LogRotationModel(BaseModel):
     max_bytes: int = Field(10 * 1024 * 1024, ge=1024)
     backup_count: int = Field(5, ge=1)
+
+
+class SemanticDedupModel(BaseModel):
+    enabled: bool = False
+    window_days: int = Field(4, ge=1, le=30)
 
 
 class GeneralModel(BaseModel):
@@ -44,6 +52,7 @@ class GeneralModel(BaseModel):
     blocked_keywords: List[str] = Field(default_factory=list)
     refresh_avatars: bool = True
     log_retention_days: int = Field(2, ge=0)
+    semantic_dedup: SemanticDedupModel = SemanticDedupModel()
 
     @field_validator("cron")
     @classmethod
@@ -59,7 +68,11 @@ class TokenModel(BaseModel):
 
 class TelegramModel(BaseModel):
     channel_id: str = ""
-    bot_token: str = ""
+
+
+class LLMModel(BaseModel):
+    base_url: str = ""
+    model: str = ""
 
 
 class ContentTypesModel(BaseModel):
@@ -88,6 +101,7 @@ class SaveRequest(BaseModel):
     general: GeneralModel
     vk: TokenModel = TokenModel()
     telegram: TelegramModel
+    llm: LLMModel = LLMModel()
     communities: List[CommunityModel] = Field(default_factory=list)
 
     @field_validator("communities")
@@ -113,13 +127,13 @@ def _normalize_owner_id(raw: str) -> str:
 def _fetch_vk_info(value: str) -> dict | None:
     """
     Возвращает словарь с name и photo для сообщества/пользователя VK.
-    Требует VK_API_TOKEN в окружении или token в config.yaml.
+    Требует VK_API_TOKEN в окружении (.env).
     """
     norm = _normalize_owner_id(value)
     if not norm:
         return None
 
-    # токен и версия API
+    # токен только из env/.env, из конфига секреты убраны
     try:
         cfg = load_config(
             CONFIG_PATH,
@@ -128,7 +142,7 @@ def _fetch_vk_info(value: str) -> dict | None:
             require_communities=False,
             allow_missing=True,
         )
-        token = os.getenv("VK_API_TOKEN", cfg.vk.token)
+        token = os.getenv("VK_API_TOKEN", "")
         api_version = cfg.general.vk_api_version
     except Exception:
         token = os.getenv("VK_API_TOKEN", "")
@@ -296,20 +310,21 @@ async def index() -> HTMLResponse:
 
 @app.get("/api/config")
 async def get_config() -> dict:
+    load_env_file(CONFIG_PATH)
     data = _load_ui_config()
-    vk_token_set = bool(data.get("vk", {}).get("token") or os.getenv("VK_API_TOKEN"))
-    tg_token_set = bool(data.get("telegram", {}).get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN"))
     data["version"] = get_version()
-    data["vk"] = {"token_set": vk_token_set}
-    data["telegram"] = {"channel_id": data.get("telegram", {}).get("channel_id", ""), "bot_token_set": tg_token_set}
+    data["vk"] = {"token_set": bool(os.getenv("VK_API_TOKEN"))}
+    data["telegram"] = {
+        "channel_id": data.get("telegram", {}).get("channel_id", ""),
+        "bot_token_set": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+    }
+    data["llm_api_key_set"] = bool(os.getenv("LLM_API_KEY"))
     data["avatar_cache"] = _read_avatar_cache()
     return data
 
 
 @app.post("/api/config")
 async def save_config(payload: SaveRequest) -> dict:
-    current = _read_raw_config(CONFIG_PATH)
-
     communities = []
     seen_ids = set()
     for community in payload.communities:
@@ -331,16 +346,19 @@ async def save_config(payload: SaveRequest) -> dict:
 
     merged = {
         "general": payload.general.model_dump(),
-        "vk": {"token": payload.vk.token or current.get("vk", {}).get("token", "")},
+        "vk": {},
         "telegram": {
             "channel_id": payload.telegram.channel_id,
-            "bot_token": payload.telegram.bot_token or current.get("telegram", {}).get("bot_token", ""),
+        },
+        "llm": {
+            "base_url": payload.llm.base_url.strip(),
+            "model": payload.llm.model.strip(),
         },
         "communities": communities,
     }
 
     try:
-        # Validate structure; tokens may be пустыми, но канал обязателен.
+        # Validate structure; tokens now come from the environment only.
         parse_config_dict(
             merged,
             require_tokens=False,

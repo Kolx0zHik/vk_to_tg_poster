@@ -7,6 +7,11 @@ from typing import Dict, List, Optional, Tuple
 from .models import Post
 
 
+class PublishedText:
+    """Cap for the text kept on published posts for the semantic dedup pool."""
+    MAX_LEN = 1000
+
+
 class Cache:
     """Durable state for the posting pipeline.
 
@@ -226,7 +231,65 @@ class Cache:
         return result
 
     def mark_published(self, key: str) -> None:
+        record = self._store.get("posts", {}).get(key)
+        if not record:
+            return
+        payload = record.get("payload") or {}
+        text = str(payload.get("text") or "")[:PublishedText.MAX_LEN]
+        if text:
+            record["text"] = text
         self._update_status(key, "published")
+
+    def published_candidates(self, since_ts: int, limit: int = 20) -> List[dict]:
+        """Recent published posts (any community) with their text, newest first.
+
+        Used as the comparison pool for the semantic duplicate checker. Only
+        records that have a stored text and a matching ``ts`` are returned.
+        """
+        now = int(time.time())
+        candidates = []
+        for key, record in self._store.get("posts", {}).items():
+            if record.get("status") != "published":
+                continue
+            text = str(record.get("text") or "").strip()
+            if not text:
+                continue
+            ts = int(record.get("ts") or 0)
+            if ts < since_ts:
+                continue
+            candidates.append(
+                {
+                    "key": key,
+                    "owner_id": record.get("owner_id"),
+                    "post_id": record.get("post_id"),
+                    "text": text,
+                    "date": int(record.get("date") or 0),
+                    "ts": ts,
+                    "age": now - ts,
+                }
+            )
+        candidates.sort(key=lambda item: item["ts"], reverse=True)
+        return candidates[:limit]
+
+    def prune_published_text(self, window_days: int) -> int:
+        """Drop stored text older than the window; keeps dedup keys intact.
+
+        Returns the number of cleared records.
+        """
+        if window_days <= 0:
+            return 0
+        cutoff = int(time.time()) - window_days * 86400
+        cleared = 0
+        for record in self._store.get("posts", {}).values():
+            if "text" not in record:
+                continue
+            if int(record.get("ts") or 0) < cutoff:
+                record.pop("text", None)
+                cleared += 1
+        if cleared:
+            self._dirty = True
+            self._persist()
+        return cleared
 
     def mark_skipped(self, key: str) -> None:
         self._update_status(key, "skipped")

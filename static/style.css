@@ -862,6 +862,20 @@ input:checked + .slider::before {
     .md-items {
         max-height: 240px;
     }
+    .app-container {
+        padding: 1rem;
+    }
+    .app-header {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+    .header-actions {
+        gap: 0.5rem;
+    }
+    .header-actions .btn {
+        padding: 0.4rem 0.65rem;
+        font-size: 0.8rem;
+    }
 }
 
 .empty-state {

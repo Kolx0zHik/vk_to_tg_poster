@@ -15,6 +15,12 @@ class LogRotationSettings:
 
 
 @dataclass
+class SemanticDedupSettings:
+    enabled: bool = False
+    window_days: int = 4
+
+
+@dataclass
 class GeneralSettings:
     cron: str = "*/10 * * * *"
     vk_api_version: str = "5.199"
@@ -26,17 +32,23 @@ class GeneralSettings:
     blocked_keywords: List[str] = field(default_factory=list)
     refresh_avatars: bool = True
     log_retention_days: int = 2
+    semantic_dedup: SemanticDedupSettings = field(default_factory=SemanticDedupSettings)
 
 
 @dataclass
 class VKSettings:
-    token: str = ""
+    pass
 
 
 @dataclass
 class TelegramSettings:
-    bot_token: str = ""
     channel_id: str = ""
+
+
+@dataclass
+class LLMSettings:
+    base_url: str = ""
+    model: str = ""
 
 
 @dataclass
@@ -62,6 +74,7 @@ class Config:
     vk: VKSettings
     telegram: TelegramSettings
     communities: List[Community]
+    llm: LLMSettings = field(default_factory=LLMSettings)
 
 
 class ConfigError(Exception):
@@ -73,6 +86,7 @@ def default_config() -> Config:
         general=GeneralSettings(),
         vk=VKSettings(),
         telegram=TelegramSettings(),
+        llm=LLMSettings(),
         communities=[],
     )
 
@@ -115,11 +129,26 @@ def _parse_log_rotation(raw: Dict) -> LogRotationSettings:
     )
 
 
+def _parse_semantic_dedup(raw: Dict) -> SemanticDedupSettings:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("general.semantic_dedup должно быть словарём")
+    return SemanticDedupSettings(
+        enabled=bool(raw.get("enabled", False)),
+        window_days=_as_int(
+            raw.get("window_days", SemanticDedupSettings.window_days),
+            "semantic_dedup.window_days",
+            SemanticDedupSettings.window_days,
+        ),
+    )
+
+
 def _parse_general(raw: Dict) -> GeneralSettings:
     raw = raw or {}
     if not isinstance(raw, dict):
         raise ConfigError("Секция general должна быть словарём")
     rotation = _parse_log_rotation(raw.get("log_rotation", {}))
+    semantic_dedup = _parse_semantic_dedup(raw.get("semantic_dedup", {}))
     blocked = raw.get("blocked_keywords", []) or []
     blocked_list = [str(k).strip() for k in blocked if str(k).strip()]
 
@@ -138,26 +167,29 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         blocked_keywords=blocked_list,
         refresh_avatars=bool(raw.get("refresh_avatars", True)),
         log_retention_days=_as_int(raw.get("log_retention_days", 2), "general.log_retention_days", 2),
+        semantic_dedup=semantic_dedup,
     )
 
 
-def _parse_vk(raw: Dict, require_token: bool = True) -> VKSettings:
-    token = os.getenv("VK_API_TOKEN", raw.get("token", ""))
-    if require_token and not token:
-        raise ConfigError("VK API token is required. Set VK_API_TOKEN or provide vk.token in config.")
-    return VKSettings(token=token)
+def _parse_vk(raw: Dict) -> VKSettings:
+    return VKSettings()
 
 
-def _parse_telegram(raw: Dict, require_token: bool = True, require_channel: bool = True) -> TelegramSettings:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", raw.get("bot_token", ""))
-    if require_token and not token:
-        raise ConfigError(
-            "Telegram bot token is required. Set TELEGRAM_BOT_TOKEN or provide telegram.bot_token in config."
-        )
-    channel = raw.get("channel_id", "")
+def _parse_telegram(raw: Dict, require_channel: bool = True) -> TelegramSettings:
+    channel = raw.get("channel_id", "") if isinstance(raw, dict) else ""
     if require_channel and not channel:
         raise ConfigError("Telegram channel_id is required in config under telegram.channel_id.")
-    return TelegramSettings(bot_token=token, channel_id=str(channel))
+    return TelegramSettings(channel_id=str(channel))
+
+
+def _parse_llm(raw: Dict) -> LLMSettings:
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("Секция llm должна быть словарём")
+    return LLMSettings(
+        base_url=str(raw.get("base_url", "") or "").strip(),
+        model=str(raw.get("model", "") or "").strip(),
+    )
 
 
 def _parse_content_types(raw: Optional[Dict]) -> ContentTypes:
@@ -200,12 +232,13 @@ def parse_config_dict(
     require_communities: bool = False,
 ) -> Config:
     general = _parse_general(raw.get("general", {}))
-    vk = _parse_vk(raw.get("vk", {}), require_token=require_tokens)
-    telegram = _parse_telegram(raw.get("telegram", {}), require_token=require_tokens, require_channel=require_channel)
+    vk = _parse_vk(raw.get("vk", {}))
+    telegram = _parse_telegram(raw.get("telegram", {}), require_channel=require_channel)
+    llm = _parse_llm(raw.get("llm", {}))
     communities = _parse_communities(raw.get("communities"))
     if require_communities and not communities:
         raise ConfigError("Config must define at least one community under `communities`.")
-    return Config(general=general, vk=vk, telegram=telegram, communities=communities)
+    return Config(general=general, vk=vk, telegram=telegram, llm=llm, communities=communities)
 
 
 def load_config(
@@ -240,9 +273,14 @@ def config_to_dict(config: Config) -> Dict:
             "blocked_keywords": config.general.blocked_keywords,
             "refresh_avatars": config.general.refresh_avatars,
             "log_retention_days": config.general.log_retention_days,
+            "semantic_dedup": {
+                "enabled": config.general.semantic_dedup.enabled,
+                "window_days": config.general.semantic_dedup.window_days,
+            },
         },
-        "vk": {"token": config.vk.token},
-        "telegram": {"bot_token": config.telegram.bot_token, "channel_id": config.telegram.channel_id},
+        "vk": {},
+        "telegram": {"channel_id": config.telegram.channel_id},
+        "llm": {"base_url": config.llm.base_url, "model": config.llm.model},
         "communities": [
             {
                 "id": community.id,

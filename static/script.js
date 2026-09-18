@@ -19,13 +19,17 @@ document.addEventListener("DOMContentLoaded", () => {
         postsCount: document.getElementById("postsCount"),
         logRetention: document.getElementById("logRetention"),
         blockedKeywords: document.getElementById("blockedKeywords"),
+        tgChannel: document.getElementById("tgChannel"),
         saveSettingsBtn: document.getElementById("saveSettingsBtn"),
 
-        vkToken: document.getElementById("vkToken"),
-        tgBotToken: document.getElementById("tgBotToken"),
-        tgChannel: document.getElementById("tgChannel"),
-        saveTokensBtn: document.getElementById("saveTokensBtn"),
-        togglePasswordBtns: document.querySelectorAll(".toggle-password"),
+        aiModal: document.getElementById("aiModal"),
+        openAiBtn: document.getElementById("openAiBtn"),
+        closeAiBtn: document.getElementById("closeAiBtn"),
+        saveAiBtn: document.getElementById("saveAiBtn"),
+        aiEnabled: document.getElementById("aiEnabled"),
+        aiBaseUrl: document.getElementById("aiBaseUrl"),
+        aiModel: document.getElementById("aiModel"),
+        aiWindow: document.getElementById("aiWindow"),
 
         newGroupInput: document.getElementById("newGroupInput"),
         addGroupBtn: document.getElementById("addGroupBtn"),
@@ -47,9 +51,6 @@ document.addEventListener("DOMContentLoaded", () => {
         closeLogsBtn: document.getElementById("closeLogsBtn"),
         refreshLogsBtn: document.getElementById("refreshLogsBtn"),
 
-        tokensModal: document.getElementById("tokensModal"),
-        openTokensBtn: document.getElementById("openTokensBtn"),
-        closeTokensBtn: document.getElementById("closeTokensBtn"),
         projectVersion: document.getElementById("projectVersion"),
 
         removeGroupModal: document.getElementById("removeGroupModal"),
@@ -85,16 +86,6 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
             els.toast.classList.add("hidden");
         }, 3000);
-    }
-
-    function setMaskedToken(input, masked) {
-        if (masked) {
-            input.value = "********";
-            input.dataset.masked = "true";
-        } else {
-            input.value = "";
-            input.dataset.masked = "false";
-        }
     }
 
     function cronFromUI() {
@@ -335,19 +326,20 @@ document.addEventListener("DOMContentLoaded", () => {
                           .filter((item) => item.length > 0)
                     : [],
                 refresh_avatars: els.refreshAvatars.checked,
+                semantic_dedup: {
+                    enabled: els.aiEnabled.checked,
+                    window_days: parseInt(els.aiWindow.value, 10) || 4,
+                },
             },
             vk: {
-                token:
-                    els.vkToken.dataset.masked === "true" && els.vkToken.value === "********"
-                        ? ""
-                        : els.vkToken.value.trim(),
+                token: "",
             },
             telegram: {
                 channel_id: els.tgChannel.value.trim(),
-                bot_token:
-                    els.tgBotToken.dataset.masked === "true" && els.tgBotToken.value === "********"
-                        ? ""
-                        : els.tgBotToken.value.trim(),
+            },
+            llm: {
+                base_url: els.aiBaseUrl.value.trim(),
+                model: els.aiModel.value.trim(),
             },
             communities,
         };
@@ -414,9 +406,13 @@ document.addEventListener("DOMContentLoaded", () => {
             els.refreshAvatars.checked = data.general?.refresh_avatars !== false;
             els.blockedKeywords.value = (data.general?.blocked_keywords || []).join("\n");
             els.filterKeywords.checked = (data.general?.blocked_keywords || []).length > 0;
-            setMaskedToken(els.vkToken, Boolean(data.vk?.token_set));
-            setMaskedToken(els.tgBotToken, Boolean(data.telegram?.bot_token_set));
             els.tgChannel.value = data.telegram?.channel_id || "";
+
+            const dedup = data.general?.semantic_dedup || {};
+            els.aiEnabled.checked = Boolean(dedup.enabled);
+            els.aiWindow.value = dedup.window_days || 4;
+            els.aiBaseUrl.value = data.llm?.base_url || "";
+            els.aiModel.value = data.llm?.model || "";
 
             state.selected = 0;
             state.query = "";
@@ -675,7 +671,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     els.saveSettingsBtn.addEventListener("click", saveConfig);
-    els.saveTokensBtn.addEventListener("click", saveConfig);
 
     els.interval.addEventListener("change", () => {
         if (els.interval.value === "custom") {
@@ -683,37 +678,6 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             els.cronCustomRow.classList.add("hidden");
             els.cronCustom.value = cronMap[els.interval.value] || "*/10 * * * *";
-        }
-    });
-
-    els.togglePasswordBtns.forEach((btn) => {
-        btn.addEventListener("click", () => {
-            const targetId = btn.getAttribute("data-target");
-            const input = document.getElementById(targetId);
-            const eyeOpen = btn.querySelector(".eye-open");
-            const eyeClosed = btn.querySelector(".eye-closed");
-
-            if (input.type === "password") {
-                input.type = "text";
-                eyeOpen.classList.add("hidden");
-                eyeClosed.classList.remove("hidden");
-            } else {
-                input.type = "password";
-                eyeOpen.classList.remove("hidden");
-                eyeClosed.classList.add("hidden");
-            }
-        });
-    });
-
-    els.vkToken.addEventListener("input", () => {
-        if (els.vkToken.value !== "********") {
-            els.vkToken.dataset.masked = "false";
-        }
-    });
-
-    els.tgBotToken.addEventListener("input", () => {
-        if (els.tgBotToken.value !== "********") {
-            els.tgBotToken.dataset.masked = "false";
         }
     });
 
@@ -847,32 +811,36 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function openTokens() {
-        if (els.tokensModal) {
-            els.tokensModal.classList.remove("hidden");
-            els.tokensModal.setAttribute("aria-hidden", "false");
+    function openAi() {
+        if (els.aiModal) {
+            els.aiModal.classList.remove("hidden");
+            els.aiModal.setAttribute("aria-hidden", "false");
         }
     }
 
-    function closeTokens() {
-        if (els.tokensModal) {
-            els.tokensModal.classList.add("hidden");
-            els.tokensModal.setAttribute("aria-hidden", "true");
+    function closeAi() {
+        if (els.aiModal) {
+            els.aiModal.classList.add("hidden");
+            els.aiModal.setAttribute("aria-hidden", "true");
         }
     }
 
-    if (els.openTokensBtn) {
-        els.openTokensBtn.addEventListener("click", () => openTokens());
+    if (els.openAiBtn) {
+        els.openAiBtn.addEventListener("click", () => openAi());
     }
 
-    if (els.closeTokensBtn) {
-        els.closeTokensBtn.addEventListener("click", () => closeTokens());
+    if (els.closeAiBtn) {
+        els.closeAiBtn.addEventListener("click", () => closeAi());
     }
 
-    if (els.tokensModal) {
-        els.tokensModal.addEventListener("click", (e) => {
-            if (e.target === els.tokensModal) {
-                closeTokens();
+    if (els.saveAiBtn) {
+        els.saveAiBtn.addEventListener("click", saveConfig);
+    }
+
+    if (els.aiModal) {
+        els.aiModal.addEventListener("click", (e) => {
+            if (e.target === els.aiModal) {
+                closeAi();
             }
         });
     }
@@ -880,7 +848,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
             closeLogs();
-            closeTokens();
+            closeAi();
             closeAddGroup();
             closeRemoveGroupModal();
         }

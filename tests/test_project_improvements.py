@@ -279,7 +279,7 @@ class AvatarCacheTests(unittest.TestCase):
 
             cfg = Config(
                 general=GeneralSettings(refresh_avatars=False),
-                vk=VKSettings(token="token"),
+                vk=VKSettings(),
                 telegram=TelegramSettings(),
                 communities=[],
             )
@@ -331,8 +331,8 @@ class PostAccountingTests(unittest.TestCase):
     def _config(self, posts_limit: int = 10) -> Config:
         return Config(
             general=GeneralSettings(posts_limit=posts_limit),
-            vk=VKSettings(token="token"),
-            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@channel"),
             communities=[Community(id="club123", name="Club")],
         )
 
@@ -810,8 +810,8 @@ class OwnerIdCacheTests(unittest.TestCase):
     def _config(self) -> Config:
         return Config(
             general=GeneralSettings(posts_limit=10),
-            vk=VKSettings(token="token"),
-            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@channel"),
             communities=[Community(id="screenname", name="Screen")],
         )
 
@@ -1315,8 +1315,8 @@ class BackfillPipelineTests(unittest.TestCase):
     def _config(posts_limit: int = 10) -> Config:
         return Config(
             general=GeneralSettings(posts_limit=posts_limit),
-            vk=VKSettings(token="token"),
-            telegram=TelegramSettings(bot_token="token", channel_id="@channel"),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@channel"),
             communities=[Community(id="club123", name="Club")],
         )
 

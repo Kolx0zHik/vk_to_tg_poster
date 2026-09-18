@@ -12,6 +12,8 @@ This repository is a small VK-to-Telegram reposting service.
 - `src.config` is the source of truth for config parsing/serialization.
 - `src.cache` stores deduplication state, per-community `baseline` and cached owner ids.
 - `src.backfill` holds backfill/resume requests written by the web UI and consumed by the scheduler.
+- `src.envfile` loads secrets from `.env` next to the config path.
+- `src.dedup` performs the optional LLM-based semantic duplicate check (OpenAI-compatible API).
 
 The project intentionally has no database. Runtime state is stored in files under `data/` and `logs/`.
 
@@ -48,9 +50,12 @@ Important environment variables:
 - `CONFIG_PATH` defaults to `data/config.yaml`
 - `RUN_MODE` is `scheduled` or `once`
 - `PORT` defaults to `8222`
-- `VK_API_TOKEN` can override `vk.token` from YAML
-- `TELEGRAM_BOT_TOKEN` can override `telegram.bot_token` from YAML
+- `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` — secrets, read only from the environment/`.env`
 - `TZ` affects logging timestamps and defaults to `Europe/Moscow`
+
+Secrets live in a `.env` file next to `CONFIG_PATH` (in Docker the mounted `data/` directory), loaded by
+`src/envfile.py`; explicit environment variables win. `config.yaml` never stores tokens, and tokens in an old
+YAML are ignored. `.env.example` documents the keys; `.env` is gitignored.
 
 If `data/config.yaml` is missing, `entrypoint.sh` creates it with built-in defaults.
 
@@ -59,11 +64,12 @@ If `data/config.yaml` is missing, `entrypoint.sh` creates it with built-in defau
 - `src/`: application code
 - `static/`: UI assets (index.html, script.js, style.css, logo.png)
 - `config/config.example.yaml`: developer-only example config for manual runs from source
+- `.env.example`: example secrets file, copied to `data/.env`
 - `.github/workflows/publish.yml`: builds and pushes `ghcr.io/kolx0zhik/vk_to_tg_poster`
 - `Dockerfile`: multi-stage Python 3.11 image
 - `docker-compose.yml`: local container run with mounted `data`
 - `docker-compose.dev.yml`: build from sources
-- `tests/`: single unit-test file; do not assume meaningful end-to-end coverage
+- `tests/`: unit tests (two files); do not assume meaningful end-to-end coverage
 - `README.md`, `ARCHITECTURE.md`, `STATE.md`, `ROADMAP.md`, `DECISIONS.md`, `CHANGELOG.md`: docs (see map above)
 
 Known dead weight: none right now. Previously `src/scheduler.py`, the `apscheduler` dependency, an empty
@@ -77,12 +83,15 @@ do not reintroduce them.
 Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 
 - Preserve the current schema shape unless the task explicitly requires config changes.
-- Keep env-var override behavior for VK and Telegram tokens.
+- Secrets belong only in `.env`/environment (`VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`); never read
+  them from or write them to `config.yaml`. Keep `src/envfile.py` loading behavior and `.env.example` in sync.
 - Keep `config_to_dict` and `save_config_dict` in sync with parser changes.
 - UI validation in `src.web` uses Pydantic models and should remain aligned with dataclass config parsing.
 - Keep `log_retention_days` and other logging-related general settings aligned between `src.config` and `src.web`.
 - `ContentTypes` defaults to `audio: true` in code while the UI writes `audio: false`; do not "fix" this
   silently — it is recorded in `STATE.md`.
+- `general.semantic_dedup` (`enabled`, `window_days`) and `llm` (`base_url`, `model`) are non-secret and edited
+  from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync.
 
 ### Posting Flow
 
@@ -92,8 +101,9 @@ Core flow:
 2. Resolve VK community identifier
 3. Fetch recent posts from VK
 4. Filter by baseline, blocked keywords, allowed content types, and dedup cache
-5. Publish to Telegram
-6. Update dedup cache and baseline
+5. Optionally run the LLM semantic duplicate check (posts with text only)
+6. Publish to Telegram
+7. Update dedup cache and baseline
 
 Important invariants:
 
@@ -104,13 +114,16 @@ Important invariants:
 - Per-community `baseline` in the cache doubles as the backfill boundary: posts above it are published, posts at or below it are marked skipped.
 - The web UI writes backfill/pause-request state to `data/backfill.json` (next to `cache_file`); the scheduler consumes it into a cache baseline on the next run. A failed VK fetch keeps the request for the following run instead of dropping it.
 - Inactive (`active: false`) communities must be skipped before any VK request.
+- The semantic check is advisory and fail-open: any LLM/network/config error keeps the post publishable; posts
+  without text are never checked. A duplicate verdict marks the post `skipped` (with `dedup_skipped` in stats).
 
 ### State Files
 
 | File | Owner | Notes |
 |---|---|---|
-| `data/config.yaml` | web UI + humans | atomic writes via `save_config_dict` |
-| `data/cache.json` | **scheduler only** | schema v2; see `ARCHITECTURE.md` |
+| `data/config.yaml` | web UI + humans | atomic writes via `save_config_dict`; no secrets |
+| `data/.env` | humans | secrets only, next to `CONFIG_PATH`; loaded by `src/envfile.py` |
+| `data/cache.json` | **scheduler only** | schema v2; published posts keep a short `text` for the semantic pool |
 | `data/backfill.json` | web UI (written), scheduler (consumed) | path derived via `requests_path_for(cache_file)` |
 | `data/avatars.json` | web UI | 24h TTL cache of name/photo |
 
@@ -148,9 +161,12 @@ UI conventions in `static/`:
 
 - Plain HTML/CSS/JS, no build step, no npm, no external framework.
 - All user-facing strings are Russian; keep the current tone.
+- Tokens are never edited in the UI: they live in `.env`. The header has an "ИИ-проверка" modal
+  (`llm.base_url`, `llm.model`, `general.semantic_dedup.enabled/window_days`) and the Telegram channel field
+  sits in the main settings card.
 - The groups panel is master-detail: left list (search + names), right settings (status segment, content
   type icon toggles). No checkboxes, no raw community ids anywhere, community name links to VK.
-- Adding a community happens in a modal (same style as the tokens modal) with preset amount buttons and
+- Adding a community happens in a modal (same style as the old tokens modal) with preset amount buttons and
   content type toggles; it saves immediately via `POST /api/config` + `POST /api/backfill`.
 - Use the `escapeHtml` helper for any dynamic value rendered into HTML.
 - Keep the `.hidden` utility as `display: none !important`; component rules with `display: flex/grid`
@@ -176,6 +192,8 @@ Be careful with any change that touches both `src.web` and `src.config`; they mu
 - Do not touch the production container, its `data/` volume, or the real `config.yaml`; use a separate
   `CONFIG_PATH` under `/tmp` for verification runs.
 - Never log, print, or commit secrets (VK/Telegram/GitHub tokens). Log errors through the redacting formatters.
+- Never write `VK_API_TOKEN`/`TELEGRAM_BOT_TOKEN`/`LLM_API_KEY` into `config.yaml` or return them from the API;
+  secrets live only in `.env`/environment (see `src/envfile.py`).
 - Do not write `data/cache.json` from `src.web` (see "State Files").
 - Do not silently change documented product constraints (no DB, one shared cron, per-attachment messages).
 - Do not edit generated or runtime artifacts: `data/*.json`, `data/logs/*`, `*.log`.
@@ -189,10 +207,12 @@ Take extra care and verify changes when touching:
 - `src.pipeline`: filtering, ordering, dedup, and baseline advancement
 - `src.tg_client`: caption limits, HTML escaping, media grouping, rate-limit retry
 - `src.vk_client`: attachment parsing and repost source extraction
-- `src.cache`: atomic persistence, statuses, migration from the legacy schema
+- `src.cache`: atomic persistence, statuses, migration from the legacy schema, stored semantic-pool text
 - `src.backfill`: baseline computation and request lifecycle
 - `src.web`: config validation, avatar refresh, and API-facing schema changes
 - `src.logger`: duplicate handlers, timezone behavior, log cleanup, and the compact file-log contract
+- `src.envfile`: `.env` loading order (explicit environment must win)
+- `src.dedup`: prompt/JSON parsing, fail-open behavior, and never leaking the API key
 
 ### Logging
 
@@ -211,7 +231,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (60 as of 1.1.8)
+python -m unittest discover -s tests          # unit tests (95 as of 1.1.14)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main
@@ -226,6 +246,7 @@ If you change config or web validation, also check that:
 
 - the web app can load config without crashing
 - runtime-created directories and files still behave correctly
+- secrets are read from `.env` next to `CONFIG_PATH` and are absent from `config.yaml` and `/api/config`
 
 If you cannot run end-to-end API checks because real VK/Telegram tokens are unavailable, say that explicitly instead of guessing.
 

@@ -25,13 +25,14 @@
                 </div>
             </div>
             <div class="header-actions">
-                <button id="openTokensBtn" class="btn btn-secondary">
+                <button id="openAiBtn" class="btn btn-secondary">
                     <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
                          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                          stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                        <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>
+                        <path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z"/>
                     </svg>
-                    Токены
+                    ИИ-проверка
                 </button>
                 <button id="openLogsBtn" class="btn btn-secondary">
                     <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
@@ -118,6 +119,14 @@
                                 <option value="30">30 дней</option>
                             </select>
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <span class="label-text">
+                            Telegram канал
+                            <small>Куда постить: @канал или ID чата.</small>
+                        </span>
+                        <input type="text" id="tgChannel" placeholder="@my_channel или -100...">
                     </div>
 
                     <div class="switch-group">
@@ -216,55 +225,66 @@
         </div>
     </div>
 
-    <!-- Tokens Modal -->
-    <div id="tokensModal" class="modal hidden" aria-hidden="true">
+    <!-- AI / Semantic Dedup Modal -->
+    <div id="aiModal" class="modal hidden" aria-hidden="true">
         <div class="modal-card modal-card-sm">
             <div class="modal-header">
-                <h3>Токены доступа</h3>
+                <h3>ИИ-проверка дублей</h3>
             </div>
             <div class="modal-body">
-                <div class="form-group">
-                    <span class="label-text">
-                        VK API Token
-                        <small>Токен сервиса VK, можно оставить пустым если в env.</small>
-                    </span>
-                    <div class="password-input">
-                        <input type="password" id="vkToken" placeholder="vk1.a.sw3...">
-                        <button type="button" class="toggle-password" data-target="vkToken">
-                            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                            <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
-                        </button>
-                    </div>
+                <div class="switch-group">
+                    <label class="switch-label">
+                        <span class="label-text">
+                            Проверять дубли через ИИ
+                            <small>Сравнивать новые посты с опубликованными за окно.</small>
+                        </span>
+                        <input type="checkbox" id="aiEnabled">
+                        <span class="slider"></span>
+                    </label>
                 </div>
 
                 <div class="form-group">
                     <span class="label-text">
-                        Telegram Bot Token
-                        <small>Токен бота, можно оставить пустым если в env.</small>
+                        Base URL
+                        <small>Например https://openrouter.ai/api/v1</small>
                     </span>
-                    <div class="password-input">
-                        <input type="password" id="tgBotToken" placeholder="123456:ABC...">
-                        <button type="button" class="toggle-password" data-target="tgBotToken">
-                            <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                            <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7c.68 0 1.35-.09 2-.26"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
-                        </button>
-                    </div>
+                    <input type="text" id="aiBaseUrl" placeholder="https://openrouter.ai/api/v1">
                 </div>
 
                 <div class="form-group">
                     <span class="label-text">
-                        Telegram канал
-                        <small>@канал или ID чата.</small>
+                        Модель
+                        <small>Например inclusionai/ling-3.0-flash-sante:free</small>
                     </span>
-                    <input type="text" id="tgChannel" placeholder="@my_channel или -100...">
+                    <input type="text" id="aiModel" placeholder="model-name">
+                </div>
+
+                <div class="form-group">
+                    <span class="label-text">
+                        Окно сравнения
+                        <small>За сколько дней искать похожие посты.</small>
+                    </span>
+                    <div class="select-wrapper">
+                        <select id="aiWindow">
+                            <option value="1">1 день</option>
+                            <option value="2">2 дня</option>
+                            <option value="3">3 дня</option>
+                            <option value="4" selected>4 дня</option>
+                            <option value="7">7 дней</option>
+                            <option value="14">14 дней</option>
+                            <option value="30">30 дней</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <span class="hint">Ключ API задаётся в файле <code>.env</code> рядом с конфигом — переменная
+                        <code>LLM_API_KEY</code>.</span>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="closeTokensBtn" class="btn btn-secondary">Закрыть</button>
-                <button id="saveTokensBtn" class="btn btn-primary">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                    Сохранить
-                </button>
+                <button id="closeAiBtn" class="btn btn-secondary">Закрыть</button>
+                <button id="saveAiBtn" class="btn btn-primary">Сохранить</button>
             </div>
         </div>
     </div>
