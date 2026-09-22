@@ -6,7 +6,7 @@ from typing import List
 from .backfill import MAX_BACKFILL_POSTS, BackfillRequests, compute_baseline, normalize_mode
 from .cache import Cache
 from .config import Config, ContentTypes
-from .dedup import DedupError, SemanticDedup
+from .dedup import DedupError, SemanticDedup, debug_log_enabled
 from .models import Post
 from .tg_client import TelegramClient
 from .vk_client import VKClient
@@ -136,9 +136,15 @@ def _dedup_check(
 
     Fail-open: on any error we log a warning and treat the post as NOT a
     duplicate so publication is never blocked by the checker.
+
+    When ``LLM_DEBUG_LOG`` is set, also log the checker's verdict on every
+    text post (temporary test knob, to see what the LLM answers for each new
+    post, not only when it is a duplicate).
     """
     candidates = _candidate_pool(cache, window_days, chat_id)
     if not candidates:
+        if debug_log_enabled():
+            logger.info("ИИ-проверка поста %s: кандидатов в окне нет, пропущено", post.id)
         return False, ""
 
     new_post = {
@@ -155,6 +161,15 @@ def _dedup_check(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Семантическая проверка не удалась (%s): %s", post.id, exc)
         return False, ""
+    if debug_log_enabled():
+        verdict = "дубль" if result.is_duplicate else "не дубль"
+        logger.info(
+            "ИИ-проверка поста %s: %s (причина: %s; кандидатов: %s)",
+            post.id,
+            verdict,
+            result.reason or "—",
+            len(candidates),
+        )
     return result.is_duplicate, result.reason
 
 

@@ -76,6 +76,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 | `VK_API_TOKEN` | `src/envfile.py`, `src/main.py`, `src/web.py` | VK API token (секрет) |
 | `TELEGRAM_BOT_TOKEN` | `src/envfile.py`, `src/main.py` | токен Telegram-бота (секрет) |
 | `LLM_API_KEY` | `src/envfile.py`, `src/pipeline.py` | ключ OpenAI-совместимого API для семантической проверки дублей |
+| `LLM_DEBUG_LOG` | `src/dedup.py`, `src/pipeline.py` | временный тумблер для тестов: `1`/`true` — писать в лог сырой ответ LLM и вердикт по каждому посту |
 
 Пример `.env` — в файле `.env.example`.
 
@@ -95,7 +96,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 ## Проверка изменений
 
 ```bash
-python -m unittest discover -s tests    # 100 тестов
+python -m unittest discover -s tests    # 103 теста
 node --check static/script.js           # синтаксис фронтенда
 ```
 

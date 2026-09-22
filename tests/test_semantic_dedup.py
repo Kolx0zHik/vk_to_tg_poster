@@ -262,6 +262,40 @@ class DedupClientTests(unittest.TestCase):
         with self.assertRaises(DedupError):
             _extract_json("без единого json")
 
+    def _capture_info(self, client: SemanticDedup) -> list[str]:
+        with patch("src.dedup.logger.info") as info:
+            client.check({"message_id": "9"}, [{"message_id": "1"}])
+        return [call.args[0] % call.args[1:] for call in info.call_args_list]
+
+    def test_debug_env_logs_raw_answer(self) -> None:
+        client = self._client()
+        client.session.post = lambda url, **kw: FakeLLMResponse(
+            200,
+            _completion('{"is_duplicate":false,"reason":"Нет дублей","matched_message_id":""}'),
+        )
+        with patch.dict(os.environ, {"LLM_DEBUG_LOG": "1"}):
+            lines = self._capture_info(client)
+        self.assertTrue(any("LLM ответ" in line and "is_duplicate" in line for line in lines), lines)
+
+    def test_debug_env_off_logs_nothing(self) -> None:
+        client = self._client()
+        client.session.post = lambda url, **kw: FakeLLMResponse(
+            200,
+            _completion('{"is_duplicate":false,"reason":"Нет дублей","matched_message_id":""}'),
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            lines = self._capture_info(client)
+        self.assertEqual(lines, [])
+
+    def test_debug_env_truncates_answer(self) -> None:
+        client = self._client()
+        long_answer = json.dumps({"is_duplicate": False, "reason": "x" * 2000, "matched_message_id": ""})
+        client.session.post = lambda url, **kw: FakeLLMResponse(200, _completion(long_answer))
+        with patch.dict(os.environ, {"LLM_DEBUG_LOG": "true"}):
+            lines = self._capture_info(client)
+        answer_line = next(line for line in lines if "LLM ответ" in line)
+        self.assertLessEqual(len(answer_line), 600)
+
 
 class PagedFakeVK:
     def __init__(self, posts: list[Post]) -> None:

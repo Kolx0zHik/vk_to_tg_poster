@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -22,6 +23,12 @@ logger = logging.getLogger("poster.dedup")
 LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 LLM_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+LLM_DEBUG_MAX_CHARS = 500
+
+
+def debug_log_enabled() -> bool:
+    """Temporary test knob: dump raw LLM answers into the log on INFO."""
+    return os.getenv("LLM_DEBUG_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 DEFAULT_SYSTEM_PROMPT = """Ты — помощник по удалению дубликатов постов в Telegram-канале.
 Сравнивай новый пост с кандидатами и решай, является ли он дубликатом по смыслу.
@@ -173,6 +180,15 @@ class SemanticDedup:
             content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
         except (AttributeError, IndexError, TypeError) as exc:
             raise DedupError(f"LLM вернул неожиданную структуру: {exc}") from None
+
+        if debug_log_enabled():
+            flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
+            logger.info(
+                "LLM ответ (пост %s, кандидатов %s): %s",
+                new_post.get("message_id", ""),
+                len(candidates),
+                flat,
+            )
 
         if not content:
             raise DedupError("LLM вернул пустой ответ")
