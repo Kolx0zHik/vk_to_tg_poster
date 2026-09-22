@@ -106,15 +106,28 @@ def _post_text(post: Post) -> str:
     return "\n".join(p for p in parts if p.strip()).strip()
 
 
-def _candidate_pool(cache: Cache, window_days: int, limit: int = 20) -> List[dict]:
-    """Published posts within the window as candidates for the LLM."""
+def _candidate_pool(cache: Cache, window_days: int, chat_id: str, limit: int = 20) -> List[dict]:
+    """Published posts within the window as candidates for the LLM.
+
+    Records are mapped to the ``chat_id/message_id/date_unix/raw_text`` shape
+    the system prompt describes. ``chat_id`` is the single Telegram channel, so
+    the global candidate pool (all source communities) stays comparable per ADR-018.
+    """
     since_ts = int(time.time()) - max(1, window_days) * 86400
-    return cache.published_candidates(since_ts, limit=limit)
+    return [
+        {
+            "chat_id": chat_id,
+            "message_id": str(item["post_id"]),
+            "date_unix": int(item.get("date") or 0),
+            "raw_text": item["text"],
+        }
+        for item in cache.published_candidates(since_ts, limit=limit)
+    ]
 
 
 def _dedup_check(
     post: Post,
-    owner_id: int,
+    chat_id: str,
     cache: Cache,
     dedup: SemanticDedup,
     window_days: int,
@@ -124,12 +137,12 @@ def _dedup_check(
     Fail-open: on any error we log a warning and treat the post as NOT a
     duplicate so publication is never blocked by the checker.
     """
-    candidates = _candidate_pool(cache, window_days)
+    candidates = _candidate_pool(cache, window_days, chat_id)
     if not candidates:
         return False, ""
 
     new_post = {
-        "chat_id": str(owner_id),
+        "chat_id": chat_id,
         "message_id": str(post.id),
         "date_unix": post.date or 0,
         "raw_text": _post_text(post),
@@ -153,6 +166,7 @@ def _publish_pending(
     general,
     max_per_poll: int,
     stats: dict,
+    chat_id: str = "",
     dedup: SemanticDedup | None = None,
 ) -> None:
     for key, post in cache.pending_posts(owner_id, limit=max_per_poll):
@@ -166,7 +180,7 @@ def _publish_pending(
             continue
         window_days = general.semantic_dedup.window_days
         if general.semantic_dedup.enabled and dedup is not None and _post_text(post).strip():
-            is_dup, reason = _dedup_check(post, owner_id, cache, dedup, window_days)
+            is_dup, reason = _dedup_check(post, chat_id, cache, dedup, window_days)
             if is_dup:
                 cache.mark_skipped(key)
                 stats["dedup_skipped"] += 1
@@ -339,6 +353,7 @@ def process_communities(
             config.general,
             max_per_poll,
             stats,
+            chat_id=config.telegram.channel_id,
             dedup=dedup,
         )
 

@@ -90,8 +90,9 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - Keep `log_retention_days` and other logging-related general settings aligned between `src.config` and `src.web`.
 - `ContentTypes` defaults to `audio: true` in code while the UI writes `audio: false`; do not "fix" this
   silently — it is recorded in `STATE.md`.
-- `general.semantic_dedup` (`enabled`, `window_days`) and `llm` (`base_url`, `model`) are non-secret and edited
-  from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync.
+- `general.semantic_dedup` (`enabled`, `window_days`) and `llm` (`base_url`, `model`, `prompt`) are non-secret
+  and edited from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync. An empty
+  `llm.prompt` falls back to the built-in `DEFAULT_SYSTEM_PROMPT` in `src.dedup`.
 
 ### Posting Flow
 
@@ -116,6 +117,8 @@ Important invariants:
 - Inactive (`active: false`) communities must be skipped before any VK request.
 - The semantic check is advisory and fail-open: any LLM/network/config error keeps the post publishable; posts
   without text are never checked. A duplicate verdict marks the post `skipped` (with `dedup_skipped` in stats).
+  Candidates are sent to the LLM as `{chat_id, message_id, date_unix, raw_text}` where `chat_id` is the
+  Telegram channel, matching the `DEFAULT_SYSTEM_PROMPT` rules.
 
 ### State Files
 
@@ -162,8 +165,8 @@ UI conventions in `static/`:
 - Plain HTML/CSS/JS, no build step, no npm, no external framework.
 - All user-facing strings are Russian; keep the current tone.
 - Tokens are never edited in the UI: they live in `.env`. The header has an "ИИ-проверка" modal
-  (`llm.base_url`, `llm.model`, `general.semantic_dedup.enabled/window_days`) and the Telegram channel field
-  sits in the main settings card.
+  (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days`) and the Telegram
+  channel field sits in the main settings card.
 - The groups panel is master-detail: left list (search + names), right settings (status segment, content
   type icon toggles). No checkboxes, no raw community ids anywhere, community name links to VK.
 - Adding a community happens in a modal (same style as the old tokens modal) with preset amount buttons and
@@ -231,7 +234,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (95 as of 1.1.14)
+python -m unittest discover -s tests          # unit tests (100 as of 1.1.14)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main

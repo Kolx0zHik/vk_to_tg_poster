@@ -1206,6 +1206,33 @@ class SaveConfigNormalizationTests(unittest.TestCase):
                 with self.assertRaises(HTTPException):
                     asyncio.run(web.save_config(payload))
 
+    def test_save_round_trips_llm_and_semantic_dedup(self) -> None:
+        import yaml
+
+        payload = web.SaveRequest(
+            general=web.GeneralModel(
+                cron="*/10 * * * *",
+                semantic_dedup=web.SemanticDedupModel(enabled=True, window_days=7),
+            ),
+            vk=web.TokenModel(),
+            telegram=web.TelegramModel(channel_id="@channel"),
+            llm=web.LLMModel(base_url="https://api.example.com/v1", model="model-x", prompt="мой промпт"),
+            communities=[web.CommunityModel(id="club1", name="Группа")],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                asyncio.run(web.save_config(payload))
+
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["llm"]["prompt"], "мой промпт")
+            self.assertEqual(data["llm"]["model"], "model-x")
+            self.assertTrue(data["general"]["semantic_dedup"]["enabled"])
+            self.assertEqual(data["general"]["semantic_dedup"]["window_days"], 7)
+            saved = web.load_config(config_path, require_tokens=False, require_channel=False)
+            self.assertEqual(saved.llm.prompt, "мой промпт")
+            self.assertTrue(saved.general.semantic_dedup.enabled)
+
 
 class DeleteCommunityTests(unittest.TestCase):
     @staticmethod
@@ -1262,6 +1289,24 @@ class DeleteCommunityTests(unittest.TestCase):
                     asyncio.run(web.delete_community("-999999"))
 
             self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_delete_keeps_llm_section(self) -> None:
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            self._seed(config_path)
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            data["llm"] = {"base_url": "https://api.example.com/v1", "model": "model-x", "prompt": "мой промпт"}
+            config_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+            with patch.object(web, "CONFIG_PATH", config_path):
+                asyncio.run(web.delete_community("-232948281"))
+
+            saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["llm"]["model"], "model-x")
+            self.assertEqual(saved["llm"]["base_url"], "https://api.example.com/v1")
+            self.assertEqual(saved["llm"]["prompt"], "мой промпт")
 
 
 class VkRuCommunityTestCase(unittest.TestCase):

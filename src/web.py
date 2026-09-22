@@ -408,6 +408,7 @@ async def delete_community(community_id: str) -> dict:
         "general": current.get("general", {}),
         "vk": current.get("vk", {}),
         "telegram": current.get("telegram", {}),
+        "llm": current.get("llm", {}),
         "communities": filtered_communities,
     }
     

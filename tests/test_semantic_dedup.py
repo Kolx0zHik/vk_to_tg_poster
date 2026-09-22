@@ -330,6 +330,31 @@ class PipelineDedupTests(unittest.TestCase):
 
             self.assertEqual(tg.sent_posts, [2])
 
+    def test_candidates_match_prompt_shape(self) -> None:
+        posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            self._seed_candidate(cache)
+
+            tg = RecordingTG()
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls:
+                mock_dedup_cls.return_value.check.return_value = DedupResult(
+                    is_duplicate=False, reason="", matched_message_id=""
+                )
+                process_communities(self._config(), PagedFakeVK(posts), tg, cache)
+
+                new_post, candidates = mock_dedup_cls.return_value.check.call_args[0]
+
+            self.assertEqual(new_post["chat_id"], "@ch")
+            self.assertEqual(new_post["message_id"], "2")
+            self.assertEqual(new_post["raw_text"], "новый инфоповод")
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(
+                candidates[0],
+                {"chat_id": "@ch", "message_id": "1", "date_unix": 10, "raw_text": "тот же инфоповод"},
+            )
+            self.assertEqual(tg.sent_posts, [2])
+
     def test_dedup_disabled_publishes_normally(self) -> None:
         config = Config(
             general=GeneralSettings(posts_limit=10, semantic_dedup=SemanticDedupSettings(enabled=False)),

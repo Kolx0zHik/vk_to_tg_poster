@@ -56,7 +56,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp config/config.example.yaml config/config.yaml
-cp .env.example .env            # сюда вписать токены
+cp .env.example config/.env     # секреты рядом с конфигом (см. CONFIG_PATH)
 CONFIG_PATH=config/config.yaml RUN_MODE=once python -m src.main   # один цикл публикации
 uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-панель
 ```
@@ -95,7 +95,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 ## Проверка изменений
 
 ```bash
-python -m unittest discover -s tests    # 95 тестов
+python -m unittest discover -s tests    # 100 тестов
 node --check static/script.js           # синтаксис фронтенда
 ```
 
