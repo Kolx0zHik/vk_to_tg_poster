@@ -314,6 +314,7 @@ def process_communities(
     cache: Cache,
     backfill: BackfillRequests | None = None,
 ) -> None:
+    cache.prune_published_text(config.general.semantic_dedup.window_days)
     for community in config.communities:
         stats = {
             "fetched": 0,
@@ -345,9 +346,6 @@ def process_communities(
         except Exception as exc:  # noqa: BLE001
             logger.error("Не удалось получить посты для %s: %s", community.name, exc)
             continue
-
-        if config.general.semantic_dedup.enabled:
-            cache.prune_published_text(config.general.semantic_dedup.window_days)
 
         stats["fetched"] = len(fetched)
         _record_fetched(cache, owner_id, fetched, stats)

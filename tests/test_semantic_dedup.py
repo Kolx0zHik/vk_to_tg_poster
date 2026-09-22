@@ -147,6 +147,93 @@ class CachePublishedTextTests(unittest.TestCase):
             self.assertNotIn("text", cache._store["posts"]["-123_1"])
 
 
+class CacheMaintenanceTests(unittest.TestCase):
+    def _age(self, cache: Cache, key: str, ts: int) -> None:
+        cache._store["posts"][key]["ts"] = ts
+        cache._persist()
+
+    def test_old_terminal_records_archive_on_reload(self) -> None:
+        old_ts = int(time.time()) - Cache.ARCHIVE_AFTER - 86400
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "cache.json")
+            cache = Cache(path)
+            cache.record_post(-123, Post(id=1, owner_id=-123, date=100, text="старый дубль"))
+            cache.mark_published("-123_1")
+            cache.record_post(-123, Post(id=2, owner_id=-123, date=110, text="мёртвый"))
+            for _ in range(Cache.PENDING_MAX_ATTEMPTS):
+                cache.mark_failed("-123_2")
+            cache.record_post(-123, Post(id=3, owner_id=-123, date=120, text="свежий"))
+            cache.mark_published("-123_3")
+            cache.record_post(-123, Post(id=4, owner_id=-123, date=130, text="в очереди"))
+            self._age(cache, "-123_1", old_ts)
+            self._age(cache, "-123_2", old_ts)
+            self._age(cache, "-123_4", old_ts)
+
+            reloaded = Cache(path)
+
+            posts = reloaded._store["posts"]
+            self.assertNotIn("-123_1", posts)
+            self.assertNotIn("-123_2", posts)
+            self.assertIn("-123_3", posts)
+            self.assertIn("-123_4", posts)
+            self.assertEqual(posts["-123_4"]["status"], "pending")
+            self.assertEqual(set(reloaded._store["archived"]), {"-123_1", "-123_2"})
+
+    def test_archived_key_is_known_and_not_republished(self) -> None:
+        old_ts = int(time.time()) - Cache.ARCHIVE_AFTER - 86400
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "cache.json")
+            cache = Cache(path)
+            cache.record_post(-123, Post(id=1, owner_id=-123, date=100, text="текст"))
+            cache.mark_published("-123_1")
+            self._age(cache, "-123_1", old_ts)
+            reloaded = Cache(path)
+
+            self.assertTrue(reloaded.is_known(-123, Post(id=1, owner_id=-123, date=100, text="текст")))
+            self.assertEqual(reloaded.record_post(-123, Post(id=1, owner_id=-123, date=100, text="текст")), "known")
+
+    def test_repeated_reload_does_not_archive_twice(self) -> None:
+        old_ts = int(time.time()) - Cache.ARCHIVE_AFTER - 86400
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "cache.json")
+            cache = Cache(path)
+            cache.record_post(-123, Post(id=1, owner_id=-123, date=100, text="текст"))
+            cache.mark_published("-123_1")
+            self._age(cache, "-123_1", old_ts)
+            first = Cache(path)
+            self.assertEqual(first._store["archived"], ["-123_1"])
+
+            second = Cache(path)
+            self.assertEqual(second._store["archived"], ["-123_1"])
+            self.assertNotIn("-123_1", second._store["posts"])
+
+    def test_text_pool_cap_drops_oldest_texts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = self._cache(tmpdir)
+            base = int(time.time())
+            total = Cache.TEXT_POOL_CAP + 1
+            for i in range(total):
+                cache._store["posts"][f"-123_{i + 1}"] = {
+                    "status": "published",
+                    "owner_id": -123,
+                    "post_id": i + 1,
+                    "date": 100 + i,
+                    "attempts": 0,
+                    "ts": base + i,
+                    "text": f"текст {i + 1}",
+                }
+            cache._enforce_text_pool_cap()
+
+            with_text = {k for k, r in cache._store["posts"].items() if "text" in r}
+            self.assertEqual(len(with_text), Cache.TEXT_POOL_CAP)
+            self.assertNotIn("-123_1", with_text)
+            self.assertIn(f"-123_{total}", with_text)
+            self.assertEqual(len(cache._store["posts"]), total)
+
+    def _cache(self, tmpdir: str) -> Cache:
+        return Cache(str(Path(tmpdir) / "cache.json"))
+
+
 class FakeLLMResponse:
     def __init__(self, status_code: int, payload: dict):
         self.status_code = status_code
@@ -402,6 +489,26 @@ class PipelineDedupTests(unittest.TestCase):
             process_communities(config, PagedFakeVK(posts), tg, Cache(str(Path(tmpdir) / "cache.json")))
 
             self.assertEqual(tg.sent_posts, [2])
+
+    def test_pool_text_pruned_while_dedup_disabled(self) -> None:
+        config = Config(
+            general=GeneralSettings(posts_limit=10, semantic_dedup=SemanticDedupSettings(enabled=False, window_days=4)),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@ch"),
+            communities=[Community(id="club123", name="Club")],
+        )
+        old_ts = int(time.time()) - 10 * 86400
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            cache.record_post(-123, Post(id=1, owner_id=-123, date=10, text="старый текст"))
+            cache.mark_published("-123_1")
+            cache._store["posts"]["-123_1"]["ts"] = old_ts
+            cache._persist()
+
+            process_communities(config, PagedFakeVK([]), RecordingTG(), cache)
+
+            self.assertNotIn("text", cache._store["posts"]["-123_1"])
+            self.assertEqual(cache._store["posts"]["-123_1"]["status"], "published")
 
 
 if __name__ == "__main__":

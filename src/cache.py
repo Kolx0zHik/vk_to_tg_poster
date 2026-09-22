@@ -30,11 +30,17 @@ class Cache:
     SCHEMA_VERSION = 2
     OWNER_ID_TTL = 30 * 24 * 3600
     PENDING_MAX_ATTEMPTS = 5
+    # Terminal records older than this collapse into ``archived`` (key-only tombstones).
+    ARCHIVE_AFTER = 30 * 24 * 3600
+    # Hard cap on posts keeping semantic-pool text (the LLM pool uses far fewer).
+    TEXT_POOL_CAP = 60
+    ARCHIVABLE_STATUSES = ("published", "skipped", "dead")
 
     def __init__(self, path: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._store: Dict = self._empty()
+        self._archived: set = set()
         self._dirty = False
         self._load()
 
@@ -46,6 +52,7 @@ class Cache:
             "posts": {},
             "communities": {},
             "owner_ids": {},
+            "archived": [],
         }
 
     def _load(self) -> None:
@@ -65,12 +72,15 @@ class Cache:
                 "posts": data.get("posts", {}) or {},
                 "communities": data.get("communities", {}) or {},
                 "owner_ids": data.get("owner_ids", {}) or {},
+                "archived": data.get("archived", []) or [],
             }
         else:
             self._store = self._migrate_legacy(data, raw_text)
             self._persist()
 
+        self._archived = {str(key) for key in self._store.get("archived", [])}
         self._purge_owner_ids()
+        self._maintain()
 
     def _migrate_legacy(self, data: Dict, raw_text: str) -> Dict:
         """Convert the legacy ``dedup``/``last_seen`` state without re-sending posts."""
@@ -142,6 +152,32 @@ class Cache:
             self._store["owner_ids"] = fresh
             self._persist()
 
+    def _maintain(self) -> None:
+        """Compact terminal records into key-only tombstones (called at load).
+
+        ``published``/``skipped``/``dead`` records older than ``ARCHIVE_AFTER`` are
+        removed from ``posts`` and their keys move to the ``archived`` list, so the
+        global dedup memory survives while the file stops growing forever. Only
+        terminal (non-retryable) records are archived; ``pending`` is never touched.
+        """
+        now = int(time.time())
+        cutoff = now - self.ARCHIVE_AFTER
+        posts: Dict = self._store.get("posts", {})
+        stale = [
+            key
+            for key, record in posts.items()
+            if record.get("status") in self.ARCHIVABLE_STATUSES
+            and int(record.get("ts", 0) or 0) < cutoff
+        ]
+        if not stale:
+            return
+        for key in stale:
+            posts.pop(key, None)
+        self._archived.update(stale)
+        self._store["archived"] = sorted(self._archived)
+        self._dirty = True
+        self._persist()
+
     # ----------------------------------------------------------------- owner ids
 
     def get_owner_id(self, key: str) -> Optional[int]:
@@ -178,7 +214,7 @@ class Cache:
             self._persist()
 
     def is_known(self, owner_id: int, post: Post) -> bool:
-        if post.dedup_key in self._store.get("posts", {}):
+        if post.dedup_key in self._archived or post.dedup_key in self._store.get("posts", {}):
             return True
         baseline = self._baseline(owner_id)
         if baseline is None or post.date is None:
@@ -188,6 +224,8 @@ class Cache:
     def record_post(self, owner_id: int, post: Post) -> str:
         """Persist a fetched post. Returns ``known``, ``baseline`` or ``new``."""
         key = post.dedup_key
+        if key in self._archived:
+            return "known"
         posts = self._store.setdefault("posts", {})
         if key in posts:
             return "known"
@@ -236,9 +274,32 @@ class Cache:
             return
         payload = record.get("payload") or {}
         text = str(payload.get("text") or "")[:PublishedText.MAX_LEN]
+        record["status"] = "published"
+        record["ts"] = int(time.time())
+        record.pop("payload", None)
         if text:
             record["text"] = text
-        self._update_status(key, "published")
+            self._enforce_text_pool_cap()
+        self._dirty = True
+        self._persist()
+
+    def _enforce_text_pool_cap(self) -> None:
+        """Keep stored semantic-pool text on at most ``TEXT_POOL_CAP`` newest posts.
+
+        Dropping text never affects dedup keys; it only shrinks the LLM candidate
+        pool, so the oldest (and least likely to match) texts are dropped first.
+        """
+        with_text = [
+            (key, record)
+            for key, record in self._store.get("posts", {}).items()
+            if "text" in record
+        ]
+        excess = len(with_text) - self.TEXT_POOL_CAP
+        if excess <= 0:
+            return
+        with_text.sort(key=lambda item: int(item[1].get("ts", 0) or 0))
+        for key, record in with_text[:excess]:
+            record.pop("text", None)
 
     def published_candidates(self, since_ts: int, limit: int = 20) -> List[dict]:
         """Recent published posts (any community) with their text, newest first.
@@ -273,6 +334,9 @@ class Cache:
 
     def prune_published_text(self, window_days: int) -> int:
         """Drop stored text older than the window; keeps dedup keys intact.
+
+        Called every run regardless of the checker flag so the pool does not
+        linger in the file forever while the setting is off.
 
         Returns the number of cleared records.
         """
