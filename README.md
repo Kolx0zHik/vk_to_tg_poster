@@ -85,7 +85,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 | Путь | Что это |
 |---|---|
 | `data/config.yaml` | конфигурация (пишется и панелью, и вручную); секретов в нём нет |
-| `data/.env` | секреты: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` (в git не попадает) |
+| `data/.env` | секреты и настройки: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `LLM_DEBUG_LOG`, `TZ` (в git не попадает) |
 | `data/cache.json` | состояние пайплайна: посты, baseline сообществ, кэш owner id |
 | `data/backfill.json` | заявки на дозаливку/возобновление, их пишет веб и потребляет планировщик |
 | `data/avatars.json` | кэш имён и аватаров сообществ |
@@ -96,7 +96,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 ## Проверка изменений
 
 ```bash
-python -m unittest discover -s tests    # 103 теста
+python -m unittest discover -s tests    # 114 тестов
 node --check static/script.js           # синтаксис фронтенда
 ```
 

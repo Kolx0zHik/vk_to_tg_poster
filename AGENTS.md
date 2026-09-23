@@ -51,6 +51,7 @@ Important environment variables:
 - `RUN_MODE` is `scheduled` or `once`
 - `PORT` defaults to `8222`
 - `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` — secrets, read only from the environment/`.env`
+- `LLM_DEBUG_LOG` — temporary flag for testing semantic deduplication (1/true/yes/on)
 - `TZ` affects logging timestamps and defaults to `Europe/Moscow`
 
 Secrets live in a `.env` file next to `CONFIG_PATH` (in Docker the mounted `data/` directory), loaded by
@@ -91,8 +92,9 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - `ContentTypes` defaults to `audio: true` in code while the UI writes `audio: false`; do not "fix" this
   silently — it is recorded in `STATE.md`.
 - `general.semantic_dedup` (`enabled`, `window_days`) and `llm` (`base_url`, `model`, `prompt`) are non-secret
-  and edited from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync. An empty
-  `llm.prompt` falls back to the built-in `DEFAULT_SYSTEM_PROMPT` in `src.dedup`.
+  and edited from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync. The system
+  prompt is mandatory: there is no built-in default, an empty `llm.prompt` disables the LLM check entirely
+  (pipeline logs a warning; `POST /api/config` rejects "enabled without prompt" with 400).
 
 ### Posting Flow
 
@@ -118,7 +120,9 @@ Important invariants:
 - The semantic check is advisory and fail-open: any LLM/network/config error keeps the post publishable; posts
   without text are never checked. A duplicate verdict marks the post `skipped` (with `dedup_skipped` in stats).
   Candidates are sent to the LLM as `{chat_id, message_id, date_unix, raw_text}` where `chat_id` is the
-  Telegram channel, matching the `DEFAULT_SYSTEM_PROMPT` rules.
+  Telegram channel; the user prompt must instruct the model to answer JSON
+  (`is_duplicate`/`reason`/`matched_message_id`).
+An empty `llm.prompt` disables the check entirely (see above).
 
 ### State Files
 

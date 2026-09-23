@@ -326,6 +326,12 @@ async def get_config() -> dict:
 
 @app.post("/api/config")
 async def save_config(payload: SaveRequest) -> dict:
+    if payload.general.semantic_dedup.enabled and not payload.llm.prompt.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Для ИИ-проверки дублей нужно задать системный промпт", "field": "llm.prompt"},
+        )
+
     communities = []
     seen_ids = set()
     for community in payload.communities:

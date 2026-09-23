@@ -1233,6 +1233,29 @@ class SaveConfigNormalizationTests(unittest.TestCase):
             self.assertEqual(saved.llm.prompt, "мой промпт")
             self.assertTrue(saved.general.semantic_dedup.enabled)
 
+    def test_save_rejects_semantic_dedup_without_prompt(self) -> None:
+        from fastapi import HTTPException
+
+        payload = web.SaveRequest(
+            general=web.GeneralModel(
+                cron="*/10 * * * *",
+                semantic_dedup=web.SemanticDedupModel(enabled=True),
+            ),
+            vk=web.TokenModel(),
+            telegram=web.TelegramModel(channel_id="@channel"),
+            llm=web.LLMModel(base_url="https://api.example.com/v1", model="model-x", prompt="   "),
+            communities=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                with self.assertRaises(HTTPException) as ctx:
+                    asyncio.run(web.save_config(payload))
+
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertEqual(ctx.exception.detail["field"], "llm.prompt")
+            self.assertFalse(config_path.exists())
+
 
 class DeleteCommunityTests(unittest.TestCase):
     @staticmethod

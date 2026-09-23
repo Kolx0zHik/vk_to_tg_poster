@@ -30,29 +30,6 @@ def debug_log_enabled() -> bool:
     """Temporary test knob: dump raw LLM answers into the log on INFO."""
     return os.getenv("LLM_DEBUG_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
 
-DEFAULT_SYSTEM_PROMPT = """Ты — помощник по удалению дубликатов постов в Telegram-канале.
-Сравнивай новый пост с кандидатами и решай, является ли он дубликатом по смыслу.
-
-Правила:
-1) Дубликат = тот же инфоповод и очень близкий смысл.
-2) Помечай дубликат только при высокой уверенности.
-3) При сомнении is_duplicate=false.
-4) Похожие темы, но разные новости, детали, даты, места, участники или выводы — не дубликат.
-5) Сравнивай только посты того же chat_id (канала).
-6) Игнорируй кандидатов без raw_text, message_id или chat_id.
-7) Никогда не сравнивай новый пост сам с собой: candidate.message_id == new message_id не дубликат.
-8) Если найдено несколько похожих кандидатов, выбери самый близкий по смыслу.
-9) reason должен коротко объяснять, почему это дубль или почему нет.
-10) Иногда что-то куплю и похожее что-то продам — это разное: один покупает, другой продаёт.
-11) Иногда смысл одинаковый, но место и даты разные — сравнивай и это тоже.
-12) Иногда инфоповод один и тот же, но упоминаются разные обстоятельства — is_duplicate=false.
-
-Отвечай строго в формате JSON с ключами:
-- "is_duplicate": true или false,
-- "reason": текст до 15 слов на русском,
-- "matched_message_id": строка, никогда null; при is_duplicate=false всегда "". """
-
-
 @dataclass
 class DedupResult:
     is_duplicate: bool
@@ -113,7 +90,12 @@ def _parse_result(raw: dict) -> DedupResult:
 
 
 class SemanticDedup:
-    """Client for the semantic duplicate checker."""
+    """Client for the semantic duplicate checker.
+
+    The system prompt is mandatory: there is no built-in fallback, so an empty
+    ``prompt`` makes the checker unavailable (the pipeline then skips the
+    semantic check entirely).
+    """
 
     def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT):
         self.base_url = base_url.rstrip("/")
@@ -123,11 +105,8 @@ class SemanticDedup:
         self.timeout = timeout
         self.session = requests.Session()
 
-    def _system_prompt(self) -> str:
-        return self.prompt or DEFAULT_SYSTEM_PROMPT
-
     def _is_configured(self) -> bool:
-        return bool(self.base_url and self.model and self.api_key)
+        return bool(self.base_url and self.model and self.api_key and self.prompt)
 
     def _chat_completion(self, messages: List[dict]) -> dict:
         url = f"{self.base_url}/chat/completions"
@@ -163,10 +142,10 @@ class SemanticDedup:
     def check(self, new_post: dict, candidates: List[dict]) -> DedupResult:
         """Ask the model whether ``new_post`` duplicates any candidate."""
         if not self._is_configured():
-            raise DedupError("LLM не настроен: задайте base_url, model и LLM_API_KEY")
+            raise DedupError("LLM не настроен: задайте base_url, model, системный промпт и LLM_API_KEY")
 
         messages = [
-            {"role": "system", "content": self._system_prompt()},
+            {"role": "system", "content": self.prompt},
             {"role": "user", "content": _build_user_prompt(new_post, candidates)},
         ]
         try:

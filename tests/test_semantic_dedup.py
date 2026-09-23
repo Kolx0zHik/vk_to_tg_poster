@@ -254,7 +254,7 @@ def _completion(content: str) -> dict:
 class DedupClientTests(unittest.TestCase):
     @staticmethod
     def _client() -> SemanticDedup:
-        return SemanticDedup("https://api.example.com/v1", "model-x", api_key="key")
+        return SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="Системный промпт")
 
     def test_check_parses_duplicate_answer(self) -> None:
         client = self._client()
@@ -327,23 +327,15 @@ class DedupClientTests(unittest.TestCase):
         self.assertEqual(system_msg["role"], "system")
         self.assertEqual(system_msg["content"], "Мой промпт")
 
-    def test_default_prompt_used_when_empty(self) -> None:
-        sent_payloads: list[dict] = []
+    def test_empty_prompt_raises_and_is_never_built_in(self) -> None:
+        client = SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="")
+        with self.assertRaises(DedupError):
+            client.check({}, [])
 
-        def fake_post(url, json=None, headers=None, timeout=None):
-            sent_payloads.append(json)
-            return FakeLLMResponse(
-                200,
-                _completion('{"is_duplicate":false,"reason":"Нет","matched_message_id":""}'),
-            )
-
-        client = self._client()
-        client.session.post = fake_post
-
-        client.check({}, [])
-
-        system_msg = sent_payloads[0]["messages"][0]
-        self.assertIn("Дубликат = тот же инфоповод", system_msg["content"])
+    def test_whitespace_prompt_raises(self) -> None:
+        client = SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="   ")
+        with self.assertRaises(DedupError):
+            client.check({}, [])
 
     def test_extract_json_rejects_garbage(self) -> None:
         with self.assertRaises(DedupError):
@@ -420,7 +412,7 @@ class PipelineDedupTests(unittest.TestCase):
             ),
             vk=VKSettings(),
             telegram=TelegramSettings(channel_id="@ch"),
-            llm=LLMSettings(base_url="https://api.example.com", model="model-x"),
+            llm=LLMSettings(base_url="https://api.example.com", model="model-x", prompt="Системный промпт"),
             communities=[Community(id="club123", name="Club")],
         )
 
@@ -481,6 +473,20 @@ class PipelineDedupTests(unittest.TestCase):
                 candidates[0],
                 {"chat_id": "@ch", "message_id": "1", "date_unix": 10, "raw_text": "тот же инфоповод"},
             )
+            self.assertEqual(tg.sent_posts, [2])
+
+    def test_empty_prompt_disables_dedup_without_instantiating_client(self) -> None:
+        config = self._config()
+        config.llm.prompt = "   "
+        posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            self._seed_candidate(cache)
+            tg = RecordingTG()
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls:
+                process_communities(config, PagedFakeVK(posts), tg, cache)
+
+            mock_dedup_cls.assert_not_called()
             self.assertEqual(tg.sent_posts, [2])
 
     def test_dedup_disabled_publishes_normally(self) -> None:

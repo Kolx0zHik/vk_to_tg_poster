@@ -1,6 +1,6 @@
 # Архитектура
 
-Документ описывает, как сервис устроен сейчас (версия 1.1.14). Принятые решения и их причины — в
+Документ описывает, как сервис устроен сейчас (версия 1.1.14, ветка `feature/semantic-dedup`). Принятые решения и их причины — в
 [DECISIONS.md](./DECISIONS.md); текущее состояние и известные проблемы — в [STATE.md](./STATE.md).
 
 ## 1. Общая схема
@@ -33,7 +33,7 @@
 | `src/vk_client.py` | VK API: посты, разбор вложений, разрешение screen name | `VKClient.fetch_posts`, `resolve_screen_name`, троттлинг `VK_REQUEST_INTERVAL=0.34`, ретраи `VK_MAX_RETRIES=2` |
 | `src/tg_client.py` | доставка в Telegram | `TelegramClient.send_post` и `send_text/photo/video/audio/media_group/link` |
 | `src/cache.py` | состояние публикаций (JSON, schema v2) | `Cache.record_post`, `pending_posts`, `mark_published/skipped/failed`, `published_candidates`, `prune_published_text`, `set_baseline`, `get/set_owner_id` |
-| `src/dedup.py` | семантическая проверка дублей через LLM | `SemanticDedup.check`, `DedupResult`, `DedupError`, `DEFAULT_SYSTEM_PROMPT` (OpenAI-совместимый `/chat/completions`) |
+| `src/dedup.py` | семантическая проверка дублей через LLM | `SemanticDedup.check`, `DedupResult`, `DedupError` (OpenAI-совместимый `/chat/completions`) |
 | `src/backfill.py` | заявки на дозаливку и возобновление | `BackfillRequests`, `compute_baseline`, `requests_path_for` |
 | `src/config.py` | схема и (де)сериализация YAML | `load_config`, `parse_config_dict`, `config_to_dict`, `save_config_dict`, `ConfigError`, `SemanticDedupSettings`, `LLMSettings` |
 | `src/envfile.py` | загрузка секретов из `.env` рядом с конфигом | `load_env_file`, `env_file_path` |
@@ -53,7 +53,7 @@
 4. `_fetch_recent` — страницы постов, максимум `MAX_FETCH_PAGES=5`, размер страницы `min(10, posts_limit)`, пока не поймает известные посты.
 5. `_record_fetched` — посты в порядке «старые → новые» пишутся в кэш: `new` / `known` / `baseline` (пропущен как уже пройденный).
 6. `_publish_pending` — публикация не более `posts_limit` постов за цикл, старые первыми; заблокированные словами и запрещёнными типами помечаются `skipped`; ошибки → `pending` с повтором, после `PENDING_MAX_ATTEMPTS=5` → `dead`.
-   - при включённой семантической проверке (`general.semantic_dedup.enabled`) каждый пост с непустым текстом сравнивается с пулом опубликованных постов за окно (`cache.published_candidates`), передаваемым в форме `{chat_id, message_id, date_unix, raw_text}`, где `chat_id` — Telegram-канал (`telegram.channel_id`); системный промпт берётся из `llm.prompt`, при пустом значении — встроенный `DEFAULT_SYSTEM_PROMPT`. Вердикт «дубль» → `skipped` и счётчик `dedup_skipped`. Любая ошибка LLM — fail-open: пост публикуется как обычно.
+   - при включённой семантической проверке (`general.semantic_dedup.enabled`) и заданном системном промпте (`llm.prompt`) каждый пост с непустым текстом сравнивается с пулом опубликованных постов за окно (`cache.published_candidates`), передаваемым в форме `{chat_id, message_id, date_unix, raw_text}`, где `chat_id` — Telegram-канал (`telegram.channel_id`); системный промпт берётся только из `llm.prompt`. Встроенного промпта по умолчанию нет: пустой `llm.prompt` полностью отключает проверку (с предупреждением в лог), посты публикуются как обычно. Вердикт «дубль» → `skipped` и счётчик `dedup_skipped`. Любая ошибка LLM — fail-open: пост публикуется как обычно.
 7. Итоговая строка `info`: `fetched/new/published/known/blocked/skipped_by_type/dedup_skipped/failed/pending/backfill`.
 
 Инварианты (не ломать):
@@ -157,7 +157,7 @@ general:
 llm:                            # не секрет: base_url, модель и промпт задаются из панели
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
-  prompt: ""                    # пустая строка — встроенный DEFAULT_SYSTEM_PROMPT
+  prompt: ""                    # обязательный системный промпт; без него проверка выключена
 vk: {}                          # секретов в конфиге нет
 telegram: { channel_id: "" }    # токен бота — только в .env
 communities:
@@ -170,7 +170,9 @@ communities:
 - запись конфига атомарная (`save_config_dict`), ошибки разбора — `ConfigError` с человекочитаемым текстом;
 - секретов в конфиге нет: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` читаются только из `.env`/окружения;
 - ключ LLM (`LLM_API_KEY`) в панели не редактируется — только `base_url`, `model` и системный промпт (`prompt`);
-- проверка дублей выключена по умолчанию и включается тумблером в модалке «ИИ-проверка»; при включении без ключа/URL/модели проверка пропускается (fail-open);
+- проверка дублей выключена по умолчанию и включается тумблером в модалке «ИИ-проверка»; системный промпт обязателен:
+  пустой `llm.prompt` при включённом тумблере отключает проверку (pipeline пишет предупреждение, `POST /api/config`
+  отвечает 400); при включении без ключа/URL/модели проверка пропускается (fail-open);
 - `POST /api/config` нормализует `communities[].id` через `normalize_display_id` и отклоняет дубли;
 - код по умолчанию считает `audio: true` (`ContentTypes`), интерфейс записывает `audio: false` — это осознанный
   разнобой, см. [STATE.md](./STATE.md).
@@ -196,7 +198,7 @@ communities:
 
 - шапка: кнопки «ИИ-проверка» и «Логи» — обе открывают модальные окна; модалки «Токены» больше нет;
 - «ИИ-проверка» — тумблер включения, `base_url`, `model`, окно сравнения (`window_days`) и системный промпт
-  (`prompt`, пусто — встроенный); подсказка, что ключ `LLM_API_KEY` задаётся в `.env`;
+  (`prompt`, обязателен при включённой проверке: без него проверка не работает); подсказка, что ключ `LLM_API_KEY` задаётся в `.env`;
 - «Основные настройки» — отдельная карточка с общей кнопкой «Сохранить»; там же поле «Telegram канал»;
 - «Отслеживаемые группы» — панель «список + настройки»: слева поиск и список (без ID и без ссылок),
   справа статус сегментом «Активно/На паузе», типы контента иконками, ссылка на сообщество в заголовке;
@@ -238,7 +240,8 @@ Dockerfile многоступенчатый: зависимости ставят
 - Секреты живут только в `.env`/окружении; не добавляйте `token`/`bot_token` обратно в `config.yaml` и не
   пишите их из веба. Приложение читает `.env` рядом с конфигом, явные env-переменные важнее файла.
 - ИИ-проверка дублей — совещательная: она только помечает пост `skipped`. При недоступном LLM, пустых
-  `base_url`/`model` или отсутствии `LLM_API_KEY` публикация продолжается как обычно (fail-open). Пул
+  `base_url`/`model`, пустом `llm.prompt` или отсутствии `LLM_API_KEY` публикация продолжается как обычно
+  (fail-open; пустой промпт отключает проверку целиком). Пул
   кандидатов берётся из `text`, сохранённого при публикации; текст старше `window_days` вычищается в начале
   каждого прогона (и при выключенной проверке), а всего текстов хранится не больше `TEXT_POOL_CAP` —
   подробности и про `archived`-tombstones см. §5 и ADR-019.

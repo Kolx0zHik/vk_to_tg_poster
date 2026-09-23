@@ -110,7 +110,7 @@ def _candidate_pool(cache: Cache, window_days: int, chat_id: str, limit: int = 2
     """Published posts within the window as candidates for the LLM.
 
     Records are mapped to the ``chat_id/message_id/date_unix/raw_text`` shape
-    the system prompt describes. ``chat_id`` is the single Telegram channel, so
+    the user prompt uses. ``chat_id`` is the single Telegram channel, so
     the global candidate pool (all source communities) stays comparable per ADR-018.
     """
     since_ts = int(time.time()) - max(1, window_days) * 86400
@@ -313,6 +313,11 @@ def process_communities(
     backfill: BackfillRequests | None = None,
 ) -> None:
     cache.prune_published_text(config.general.semantic_dedup.window_days)
+    # No built-in prompt: without an explicit system prompt the LLM check is simply
+    # not performed (the run continues as if semantic_dedup were disabled).
+    dedup_enabled = config.general.semantic_dedup.enabled and bool(config.llm.prompt.strip())
+    if config.general.semantic_dedup.enabled and not dedup_enabled:
+        logger.warning("ИИ-проверка включена, но системный промпт (llm.prompt) не задан — проверка пропущена")
     for community in config.communities:
         stats = {
             "fetched": 0,
@@ -349,7 +354,7 @@ def process_communities(
         _record_fetched(cache, owner_id, fetched, stats)
 
         dedup = None
-        if config.general.semantic_dedup.enabled:
+        if dedup_enabled:
             dedup = SemanticDedup(
                 base_url=config.llm.base_url,
                 model=config.llm.model,
