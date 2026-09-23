@@ -17,7 +17,7 @@ general:
 llm:
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
-  prompt: "Ты — помощник по удалению дубликатов постов в Telegram-канале. ..."  # обязательный системный промпт: без него ИИ-проверка не работает
+  prompt: "Ты — помощник по удалению дубликатов постов в Telegram-канале. ..."  # обязательный системный промпт: только критерии «дубль / не дубль»; формат ответа (JSON is_duplicate/reason/matched) задаёт код, без промпта ИИ-проверка не работает
 vk: {}
 telegram:
   channel_id: ""

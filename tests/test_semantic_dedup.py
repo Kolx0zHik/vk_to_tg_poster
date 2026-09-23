@@ -18,7 +18,15 @@ from src.config import (
     config_to_dict,
     parse_config_dict,
 )
-from src.dedup import DedupError, DedupResult, SemanticDedup, _extract_json
+from src.dedup import (
+    ANSWER_CONTRACT,
+    CANDIDATES_CHAR_BUDGET,
+    DedupError,
+    DedupResult,
+    SemanticDedup,
+    _build_user_prompt,
+    _extract_json,
+)
 from src.envfile import env_file_path, load_env_file
 from src.models import Post
 from src.pipeline import process_communities
@@ -256,26 +264,111 @@ class DedupClientTests(unittest.TestCase):
     def _client() -> SemanticDedup:
         return SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="Системный промпт")
 
+    def test_user_prompt_numbers_candidates(self) -> None:
+        prompt = _build_user_prompt(
+            {"text": "новый пост", "date": 20},
+            [{"text": "первый", "date": 10}, {"text": "второй", "date": 11}],
+        )
+        self.assertIn("1. [", prompt)
+        self.assertIn("2. [", prompt)
+        self.assertIn("первый", prompt)
+        self.assertIn("второй", prompt)
+        self.assertIn("новый пост", prompt)
+        self.assertIn('"is_duplicate"', prompt)
+        self.assertIn('"matched"', prompt)
+
+    def test_user_prompt_drops_legacy_id_fields(self) -> None:
+        prompt = _build_user_prompt(
+            {"text": "x", "date": 0, "chat_id": "@ch", "message_id": "9"},
+            [{"text": "y", "date": 0, "chat_id": "@ch", "message_id": "1"}],
+        )
+        self.assertNotIn("chat_id", prompt)
+        self.assertNotIn("message_id", prompt)
+
+    def test_matched_float_accepted(self) -> None:
+        client = self._client()
+        client.session.post = lambda url, **kw: FakeLLMResponse(
+            200,
+            _completion('{"is_duplicate":true,"reason":"Дубль","matched":2.0}'),
+        )
+        result = client.check(
+            {"text": "пост"},
+            [{"text": "один"}, {"text": "два"}],
+        )
+        self.assertTrue(result.is_duplicate)
+        self.assertEqual(result.matched_index, 2)
+
+    def test_string_false_is_not_duplicate(self) -> None:
+        client = self._client()
+        client.session.post = lambda url, **kw: FakeLLMResponse(
+            200,
+            _completion('{"is_duplicate":"false","reason":"","matched":0}'),
+        )
+        result = client.check({"text": "x"}, [])
+        self.assertFalse(result.is_duplicate)
+
+    def test_user_prompt_caps_new_post_text(self) -> None:
+        from src.dedup import NEW_POST_TEXT_MAX
+
+        long_text = "а" * (NEW_POST_TEXT_MAX + 500)
+        prompt = _build_user_prompt({"text": long_text, "date": 20}, [])
+        self.assertNotIn(long_text, prompt)
+        self.assertIn("а" * NEW_POST_TEXT_MAX, prompt)
+
+    def test_user_prompt_respects_char_budget_without_cutting_mid_json(self) -> None:
+        big = "а" * 1000
+        candidates = [{"text": f"{i} {big}", "date": 10} for i in range(50)]
+        prompt = _build_user_prompt({"text": "новый", "date": 20}, candidates)
+        self.assertLessEqual(len(prompt), CANDIDATES_CHAR_BUDGET + 500)
+        self.assertIn("Кандидаты:", prompt)
+        self.assertIn('"matched"', prompt)
+        # the last kept candidate may be cut to budget, but the contract line is intact
+        self.assertTrue(prompt.rstrip().endswith("}"))
+        # numbering is prefix-consistent: if candidate N appears at all, 1..N-1 are present
+        first_kept = next(
+            (int(line.split(".")[0]) for line in prompt.splitlines() if line and line[0].isdigit() and "." in line),
+            None,
+        )
+        self.assertEqual(first_kept, 1)
+        kept = [int(line.split(".")[0]) for line in prompt.splitlines() if line[:2].isdigit() and "." in line]
+        # candidates shown are 1..K contiguous (truncation only at the tail)
+        self.assertEqual(kept, list(range(1, len(kept) + 1)) if kept else [])
+        # the container does not spill over the budget for the candidate block
+        candidates_block = prompt.split("Кандидаты:", 1)[1].split(ANSWER_CONTRACT, 1)[0]
+        self.assertLessEqual(len(candidates_block), CANDIDATES_CHAR_BUDGET + 200)
+
     def test_check_parses_duplicate_answer(self) -> None:
         client = self._client()
         client.session.post = lambda url, **kw: FakeLLMResponse(
             200,
-            _completion('{"is_duplicate":true,"reason":"Тот же инфоповод","matched_message_id":"17"}'),
+            _completion('{"is_duplicate":true,"reason":"Тот же инфоповод","matched":1}'),
         )
 
-        result = client.check({"chat_id": "-1", "message_id": "9", "raw_text": "пост"}, [{"raw_text": "пост"}])
+        result = client.check({"text": "пост"}, [{"text": "пост"}])
 
         self.assertTrue(result.is_duplicate)
-        self.assertEqual(result.matched_message_id, "17")
+        self.assertEqual(result.matched_index, 1)
+
+    def test_matched_out_of_range_falls_back_to_zero(self) -> None:
+        client = self._client()
+        client.session.post = lambda url, **kw: FakeLLMResponse(
+            200,
+            _completion('{"is_duplicate":true,"reason":"Тот же инфоповод","matched":17}'),
+        )
+
+        result = client.check({"text": "пост"}, [{"text": "пост"}])
+
+        self.assertTrue(result.is_duplicate)
+        self.assertEqual(result.matched_index, 0)
 
     def test_check_parses_fenced_json(self) -> None:
         client = self._client()
         client.session.post = lambda url, **kw: FakeLLMResponse(
             200,
-            _completion('```json\n{"is_duplicate":false,"reason":"Разная тема","matched_message_id":""}\n```'),
+            _completion('```json\n{"is_duplicate":false,"reason":"Разная тема","matched":0}\n```'),
         )
 
-        result = client.check({}, [])
+        result = client.check({"text": "x"}, [])
 
         self.assertFalse(result.is_duplicate)
 
@@ -287,11 +380,11 @@ class DedupClientTests(unittest.TestCase):
             calls.append(1)
             if len(calls) == 1:
                 return FakeLLMResponse(429, {})
-            return FakeLLMResponse(200, _completion('{"is_duplicate":false,"reason":"Нет","matched_message_id":""}'))
+            return FakeLLMResponse(200, _completion('{"is_duplicate":false,"reason":"Нет","matched":0}'))
 
         client.session.post = fake_post
         with patch("src.dedup.time.sleep"):
-            result = client.check({}, [])
+            result = client.check({"text": "x"}, [])
 
         self.assertFalse(result.is_duplicate)
         self.assertEqual(len(calls), 2)
@@ -314,13 +407,13 @@ class DedupClientTests(unittest.TestCase):
             sent_payloads.append(json)
             return FakeLLMResponse(
                 200,
-                _completion('{"is_duplicate":false,"reason":"Нет","matched_message_id":""}'),
+                _completion('{"is_duplicate":false,"reason":"Нет","matched":0}'),
             )
 
         client = SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="Мой промпт")
         client.session.post = fake_post
 
-        client.check({}, [])
+        client.check({"text": "x"}, [])
 
         self.assertEqual(len(sent_payloads), 1)
         system_msg = sent_payloads[0]["messages"][0]
@@ -344,7 +437,7 @@ class DedupClientTests(unittest.TestCase):
     def _capture_info(self, client: SemanticDedup) -> list[str]:
         with patch("src.dedup.logger.info") as info:
             try:
-                client.check({"message_id": "9"}, [{"message_id": "1"}])
+                client.check({"text": "x"}, [{"text": "y"}])
             except DedupError:
                 pass
         return [call.args[0] % call.args[1:] for call in info.call_args_list]
@@ -360,7 +453,7 @@ class DedupClientTests(unittest.TestCase):
         client = self._client()
         client.session.post = lambda url, **kw: FakeLLMResponse(
             200,
-            _completion('{"is_duplicate":false,"reason":"Нет дублей","matched_message_id":""}'),
+            _completion('{"is_duplicate":false,"reason":"Нет дублей","matched":0}'),
         )
         with patch.dict(os.environ, {"LLM_DEBUG_LOG": "1"}):
             lines = self._capture_info(client)
@@ -429,7 +522,7 @@ class PipelineDedupTests(unittest.TestCase):
             tg = RecordingTG()
             with patch("src.pipeline.SemanticDedup") as mock_dedup_cls:
                 mock_dedup_cls.return_value.check.return_value = DedupResult(
-                    is_duplicate=True, reason="Дубль", matched_message_id="1"
+                    is_duplicate=True, reason="Дубль", matched_index=1
                 )
                 process_communities(self._config(), PagedFakeVK(posts), tg, cache)
 
@@ -459,21 +552,52 @@ class PipelineDedupTests(unittest.TestCase):
             tg = RecordingTG()
             with patch("src.pipeline.SemanticDedup") as mock_dedup_cls:
                 mock_dedup_cls.return_value.check.return_value = DedupResult(
-                    is_duplicate=False, reason="", matched_message_id=""
+                    is_duplicate=False, reason="", matched_index=0
                 )
                 process_communities(self._config(), PagedFakeVK(posts), tg, cache)
 
                 new_post, candidates = mock_dedup_cls.return_value.check.call_args[0]
 
-            self.assertEqual(new_post["chat_id"], "@ch")
-            self.assertEqual(new_post["message_id"], "2")
-            self.assertEqual(new_post["raw_text"], "новый инфоповод")
+            self.assertEqual(new_post, {"text": "новый инфоповод", "date": 20})
             self.assertEqual(len(candidates), 1)
-            self.assertEqual(
-                candidates[0],
-                {"chat_id": "@ch", "message_id": "1", "date_unix": 10, "raw_text": "тот же инфоповод"},
-            )
+            self.assertEqual(candidates[0], {"text": "тот же инфоповод", "date": 10})
             self.assertEqual(tg.sent_posts, [2])
+
+    def test_duplicate_verdict_logs_matched_post(self) -> None:
+        posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            self._seed_candidate(cache)
+            tg = RecordingTG()
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls, patch(
+                "src.pipeline.logger.info"
+            ) as info:
+                mock_dedup_cls.return_value.check.return_value = DedupResult(
+                    is_duplicate=True, reason="Тот же инфоповод", matched_index=1
+                )
+                process_communities(self._config(), PagedFakeVK(posts), tg, cache)
+
+            lines = [call.args[0] % call.args[1:] for call in info.call_args_list]
+            dup_line = next(line for line in lines if "дубль, пропущен" in line)
+            self.assertIn("пост 1 из -123", dup_line)
+            self.assertIn("Тот же инфоповод", dup_line)
+            self.assertEqual(tg.sent_posts, [])
+
+    def test_verdict_without_matched_index_still_skips(self) -> None:
+        posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            self._seed_candidate(cache)
+            tg = RecordingTG()
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls:
+                mock_dedup_cls.return_value.check.return_value = DedupResult(
+                    is_duplicate=True, reason="Тот же инфоповод", matched_index=0
+                )
+                process_communities(self._config(), PagedFakeVK(posts), tg, cache)
+
+            self.assertEqual(tg.sent_posts, [])
+            store = json.loads((Path(tmpdir) / "cache.json").read_text(encoding="utf-8"))
+            self.assertEqual(store["posts"]["-123_2"]["status"], "skipped")
 
     def test_empty_prompt_disables_dedup_without_instantiating_client(self) -> None:
         config = self._config()
@@ -539,7 +663,7 @@ class DebugVerdictLogTests(unittest.TestCase):
                 os.environ, {"LLM_DEBUG_LOG": "1"}
             ), patch("src.pipeline.logger.info") as info:
                 mock_dedup_cls.return_value.check.return_value = DedupResult(
-                    is_duplicate=is_dup, reason="Проверка", matched_message_id="1" if is_dup else ""
+                    is_duplicate=is_dup, reason="Проверка", matched_index=1 if is_dup else 0
                 )
                 process_communities(PipelineDedupTests._config(), PagedFakeVK(posts), tg, cache)
             lines = [call.args[0] % call.args[1:] for call in info.call_args_list]

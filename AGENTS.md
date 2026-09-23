@@ -119,9 +119,14 @@ Important invariants:
 - Inactive (`active: false`) communities must be skipped before any VK request.
 - The semantic check is advisory and fail-open: any LLM/network/config error keeps the post publishable; posts
   without text are never checked. A duplicate verdict marks the post `skipped` (with `dedup_skipped` in stats).
-  Candidates are sent to the LLM as `{chat_id, message_id, date_unix, raw_text}` where `chat_id` is the
-  Telegram channel; the user prompt must instruct the model to answer JSON
-  (`is_duplicate`/`reason`/`matched_message_id`).
+  The user prompt (built in `src/dedup._build_user_prompt`) owns the data shape and the answer contract: the new
+  post (text capped by `NEW_POST_TEXT_MAX`) plus a dated, 1-numbered candidate list (`{date, text}` each, total
+  capped by `CANDIDATES_CHAR_BUDGET` — trailing candidates dropped whole, the last kept one cut short with a
+  marker) and a line requiring strict JSON `is_duplicate`/`reason`/`matched`, where `matched` is the candidate
+  number the pipeline maps back to its source post for logging. The configured `llm.prompt` carries only the
+  dedup rules; it no longer has to spell out the JSON format (see ADR-021). The legacy
+  `chat_id`/`message_id`/`date_unix`/`raw_text` payload from the n8n flow and the unused `matched_message_id` are
+  gone.
 An empty `llm.prompt` disables the check entirely (see above).
 
 ### State Files

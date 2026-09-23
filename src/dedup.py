@@ -4,6 +4,10 @@ Kept deliberately small and dependency-free (uses ``requests`` only).  The
 caller decides what to do with the answer; the checker itself never blocks
 publication: every exception is converted into ``DedupError`` so the pipeline
 can fail open (publish anyway).
+
+The user message owns only the data shape (ADR-021): the new post and a
+numbered, dated candidate list plus the answer contract line.  Dedup rules
+themselves live exclusively in the operator's system prompt (ADR-020).
 """
 
 from __future__ import annotations
@@ -24,6 +28,16 @@ LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 LLM_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 LLM_DEBUG_MAX_CHARS = 500
+# Candidate block budget in characters. Truncation happens on whole-candidate
+# boundaries: trailing candidates are dropped entirely; the last kept candidate
+# may be cut short with a marker (never inside the numbered prefix).
+CANDIDATES_CHAR_BUDGET = 8000
+# Skip the trailing candidate entirely unless at least this many chars of its
+# line still fit — a few words are useless for the verdict but cost tokens.
+CANDIDATE_TAIL_MIN = 200
+# Cap for the new post text in the prompt (candidates are already stored capped
+# by PublishedText.MAX_LEN in src/cache.py; the new post is not).
+NEW_POST_TEXT_MAX = 2000
 
 
 def debug_log_enabled() -> bool:
@@ -34,23 +48,58 @@ def debug_log_enabled() -> bool:
 class DedupResult:
     is_duplicate: bool
     reason: str
-    matched_message_id: str
+    # 1-based candidate number the model matched, 0 when absent or invalid.
+    matched_index: int = 0
 
 
 class DedupError(Exception):
     """Raised when the LLM endpoint cannot produce a decision."""
 
 
+ANSWER_CONTRACT = (
+    "Ответь строго одним JSON-объектом без пояснений: "
+    '{"is_duplicate": true или false, "reason": "короткое пояснение", '
+    '"matched": номер кандидата из списка или 0}'
+)
+
+
+def _fmt_date(ts) -> str:
+    try:
+        ts = int(ts or 0)
+    except (TypeError, ValueError):
+        return ""
+    return time.strftime("%Y-%m-%d", time.localtime(ts)) if ts else ""
+
+
+def _candidate_line(idx: int, candidate: dict) -> str:
+    text = str(candidate.get("text") or "").strip()
+    date = _fmt_date(candidate.get("date"))
+    return f"{idx}. [{date}] {text}" if date else f"{idx}. {text}"
+
+
 def _build_user_prompt(new_post: dict, candidates: List[dict]) -> str:
+    """Render data only: the new post, then the numbered candidates within budget."""
+    date = _fmt_date(new_post.get("date"))
+    header = f"Новый пост [{date}]:" if date else "Новый пост:"
+    new_text = str(new_post.get("text") or "").strip()[:NEW_POST_TEXT_MAX]
+    used = 0
+    lines: List[str] = []
+    for idx, candidate in enumerate(candidates, start=1):
+        line = _candidate_line(idx, candidate)
+        remaining = CANDIDATES_CHAR_BUDGET - used
+        if len(line) <= remaining:
+            lines.append(line)
+            used += len(line) + 2
+            continue
+        if remaining >= CANDIDATE_TAIL_MIN:
+            lines.append(line[:remaining].rstrip() + " …")
+        break
+    body = "\n".join(lines) if lines else "(пусто)"
     return (
-        "Проверь, является ли новый пост дубликатом среди кандидатов того же канала.\n\n"
-        "Новый пост:\n"
-        f"chat_id: {new_post.get('chat_id', '')}\n"
-        f"message_id: {new_post.get('message_id', '')}\n"
-        f"date_unix: {new_post.get('date_unix', '')}\n"
-        f"raw_text: {new_post.get('raw_text', '')}\n\n"
-        "Кандидаты:\n"
-        f"{json.dumps(candidates, ensure_ascii=False)[:8000]}\n"
+        "Проверь, является ли новый пост дубликатом одного из кандидатов.\n\n"
+        f"{header}\n{new_text}\n\n"
+        f"Кандидаты:\n{body}\n\n"
+        f"{ANSWER_CONTRACT}"
     )
 
 
@@ -77,16 +126,49 @@ def _extract_json(text: str) -> dict:
     return data
 
 
-def _parse_result(raw: dict) -> DedupResult:
+def _parse_matched(value, candidate_count: int) -> int:
+    """Coerce ``matched`` to a valid 1-based candidate number, else 0.
+
+    Tolerates JSON numbers (int or float) and their string forms; booleans and
+    junk always yield 0.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        idx = value
+    elif isinstance(value, float):
+        idx = int(value) if value.is_integer() else 0
+    elif isinstance(value, str):
+        try:
+            idx = int(value.strip())
+        except ValueError:
+            return 0
+    else:
+        return 0
+    return idx if 1 <= idx <= candidate_count else 0
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on", "да"}
+    if isinstance(value, int):
+        return bool(value)
+    return bool(value)
+
+
+def _parse_result(raw: dict, candidate_count: int) -> DedupResult:
     try:
-        is_dup = bool(raw.get("is_duplicate", False))
+        is_dup = _as_bool(raw.get("is_duplicate", False))
         reason = str(raw.get("reason", "") or "").strip()
-        matched = str(raw.get("matched_message_id") or "").strip()
     except (AttributeError, TypeError) as exc:
         raise DedupError(f"Некорректный формат ответа LLM: {exc}") from None
-    if is_dup and not matched:
-        matched = ""
-    return DedupResult(is_duplicate=is_dup, reason=reason, matched_message_id=matched)
+    return DedupResult(
+        is_duplicate=is_dup,
+        reason=reason,
+        matched_index=_parse_matched(raw.get("matched"), candidate_count),
+    )
 
 
 class SemanticDedup:
@@ -140,7 +222,7 @@ class SemanticDedup:
         raise DedupError(f"LLM недоступен: {last_exc}") from last_exc
 
     def check(self, new_post: dict, candidates: List[dict]) -> DedupResult:
-        """Ask the model whether ``new_post`` duplicates any candidate."""
+        """Ask the model whether ``new_post`` (``{"text", "date"}``) duplicates any candidate."""
         if not self._is_configured():
             raise DedupError("LLM не настроен: задайте base_url, model, системный промпт и LLM_API_KEY")
 
@@ -163,14 +245,9 @@ class SemanticDedup:
         if not content:
             raise DedupError("LLM вернул пустой ответ")
         try:
-            return _parse_result(_extract_json(content))
+            return _parse_result(_extract_json(content), len(candidates))
         except DedupError:
             if debug_log_enabled():
                 flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
-                logger.info(
-                    "LLM ответ (пост %s, кандидатов %s): %s",
-                    new_post.get("message_id", ""),
-                    len(candidates),
-                    flat,
-                )
+                logger.info("LLM ответ (кандидатов %s): %s", len(candidates), flat)
             raise
