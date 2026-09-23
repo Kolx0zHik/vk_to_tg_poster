@@ -518,5 +518,41 @@ class PipelineDedupTests(unittest.TestCase):
             self.assertEqual(cache._store["posts"]["-123_1"]["status"], "published")
 
 
+class DebugVerdictLogTests(unittest.TestCase):
+    """`LLM_DEBUG_LOG` must not double-log: the "duplicate" line is printed by
+    _publish_pending unconditionally, the debug line only covers "not a duplicate"."""
+
+    def _run(self, is_dup: bool) -> tuple[list[str], RecordingTG]:
+        posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = Cache(str(Path(tmpdir) / "cache.json"))
+            cache.record_post(-123, Post(id=1, owner_id=-123, date=10, text="тот же инфоповод"))
+            cache.mark_published("-123_1")
+            tg = RecordingTG()
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls, patch.dict(
+                os.environ, {"LLM_DEBUG_LOG": "1"}
+            ), patch("src.pipeline.logger.info") as info:
+                mock_dedup_cls.return_value.check.return_value = DedupResult(
+                    is_duplicate=is_dup, reason="Проверка", matched_message_id="1" if is_dup else ""
+                )
+                process_communities(PipelineDedupTests._config(), PagedFakeVK(posts), tg, cache)
+            lines = [call.args[0] % call.args[1:] for call in info.call_args_list]
+            return lines, tg
+
+    def test_duplicate_logs_no_debug_verdict_line(self) -> None:
+        lines, tg = self._run(True)
+        self.assertEqual(tg.sent_posts, [])
+        self.assertEqual([line for line in lines if "ИИ-проверка" in line], [])
+        self.assertEqual(len([line for line in lines if "дубль, пропущен" in line]), 1)
+
+    def test_non_duplicate_logs_debug_line_once(self) -> None:
+        lines, tg = self._run(False)
+        self.assertEqual(tg.sent_posts, [2])
+        verdict_lines = [line for line in lines if "ИИ-проверка" in line]
+        self.assertEqual(len(verdict_lines), 1)
+        self.assertIn("не дубль", verdict_lines[0])
+        self.assertEqual([line for line in lines if "дубль, пропущен" in line], [])
+
+
 if __name__ == "__main__":
     unittest.main()

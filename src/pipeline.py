@@ -137,9 +137,9 @@ def _dedup_check(
     Fail-open: on any error we log a warning and treat the post as NOT a
     duplicate so publication is never blocked by the checker.
 
-    When ``LLM_DEBUG_LOG`` is set, also log the checker's verdict on every
-    text post (temporary test knob, to see what the LLM answers for each new
-    post, not only when it is a duplicate).
+    When ``LLM_DEBUG_LOG`` is set, also log the "not a duplicate" verdict for
+    every text post (the "duplicate" line is already logged unconditionally by
+    ``_publish_pending``, so it is not repeated here).
     """
     candidates = _candidate_pool(cache, window_days, chat_id)
     if not candidates:
@@ -161,12 +161,10 @@ def _dedup_check(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Семантическая проверка не удалась (%s): %s", post.id, exc)
         return False, ""
-    if debug_log_enabled():
-        verdict = "дубль" if result.is_duplicate else "не дубль"
+    if debug_log_enabled() and not result.is_duplicate:
         logger.info(
-            "ИИ-проверка поста %s: %s (причина: %s; кандидатов: %s)",
+            "ИИ-проверка поста %s: не дубль (причина: %s; кандидатов: %s)",
             post.id,
-            verdict,
             result.reason or "—",
             len(candidates),
         )
