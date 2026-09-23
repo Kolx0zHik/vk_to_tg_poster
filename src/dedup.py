@@ -181,15 +181,17 @@ class SemanticDedup:
         except (AttributeError, IndexError, TypeError) as exc:
             raise DedupError(f"LLM вернул неожиданную структуру: {exc}") from None
 
-        if debug_log_enabled():
-            flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
-            logger.info(
-                "LLM ответ (пост %s, кандидатов %s): %s",
-                new_post.get("message_id", ""),
-                len(candidates),
-                flat,
-            )
-
         if not content:
             raise DedupError("LLM вернул пустой ответ")
-        return _parse_result(_extract_json(content))
+        try:
+            return _parse_result(_extract_json(content))
+        except DedupError:
+            if debug_log_enabled():
+                flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
+                logger.info(
+                    "LLM ответ (пост %s, кандидатов %s): %s",
+                    new_post.get("message_id", ""),
+                    len(candidates),
+                    flat,
+                )
+            raise
