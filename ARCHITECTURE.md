@@ -142,16 +142,16 @@ TTL — 24 часа (`AVATAR_TTL_SECONDS`), обновляется флагом 
 ```yaml
 general:
   cron: "*/15 * * * *"          # одно расписание на все сообщества
-  vk_api_version: "5.199"
+  vk_api_version: "5.199"       # версия VK API для всех запросов (менять не нужно)
   posts_limit: 10               # и размер страницы, и лимит публикаций за цикл
-  cache_file: data/cache.json
-  log_file: data/logs/poster.log
+  cache_file: data/cache.json   # путь к файлу состояния пайплайна (дубли/базлайны)
+  log_file: data/logs/poster.log # путь к файлу лога
   log_level: INFO               # DEBUG/INFO/WARNING/ERROR/CRITICAL
   timezone: Europe/Moscow       # IANA-таймзона логов и расписания (была env TZ)
-  log_rotation: { max_bytes: 10485760, backup_count: 5 }
+  log_rotation: { max_bytes: 10485760, backup_count: 5 } # ротация: порог ~10 МБ и число архивов
   blocked_keywords: []          # фильтр по тексту и заголовкам вложений
-  refresh_avatars: true
-  log_retention_days: 2
+  refresh_avatars: true         # обновлять имени/фото сообществ в панели (кэш avatars.json)
+  log_retention_days: 2         # удалять файловые логи старше N дней
   semantic_dedup:
     enabled: false              # ИИ-проверка дублей перед публикацией
     window_days: 4              # окно поиска кандидатов
@@ -160,6 +160,7 @@ llm:                            # не секрет: base_url, модель и �
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
   prompt: ""                    # обязательный системный промпт; без него проверка выключена
+                                # (в bootstrap-конфиге — стартовый STARTER_LLM_PROMPT, ADR-023)
 vk: {}                          # секретов в конфиге нет
 telegram: { channel_id: "" }    # токен бота — только в .env
 communities:

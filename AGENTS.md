@@ -97,8 +97,12 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - `general.semantic_dedup` (`enabled`, `window_days`, `debug_log`), `general.timezone` and `llm` (`base_url`,
   `model`, `prompt`) are non-secret and edited from the web UI; keep `src.config`, `src.web` models and
   `static/script.js` in sync. The system
-  prompt is mandatory: there is no built-in default, an empty `llm.prompt` disables the LLM check entirely
-  (pipeline logs a warning; `POST /api/config` rejects "enabled without prompt" with 400).
+  prompt is mandatory at parse time: dataclass defaults leave `llm.prompt` empty and an empty
+  `llm.prompt` disables the LLM check entirely (pipeline logs a warning; `POST /api/config` rejects "enabled
+  without prompt" with 400). The bootstrap config (`default_config_dict`, seeded by `entrypoint.sh`) and
+  `config/config.example.yaml` ship starter `llm.base_url`/`model`/`prompt`
+  (`STARTER_LLM_PROMPT` in `src/config.py`) so a fresh install can enable the check without writing a prompt
+  from scratch (ADR-023).
 
 ### Posting Flow
 

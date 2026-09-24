@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 from src.cache import Cache
 from src.config import (
+    STARTER_LLM_BASE_URL,
+    STARTER_LLM_MODEL,
+    STARTER_LLM_PROMPT,
     Community,
     Config,
     GeneralSettings,
@@ -16,6 +19,8 @@ from src.config import (
     TelegramSettings,
     VKSettings,
     config_to_dict,
+    default_config,
+    default_config_dict,
     parse_config_dict,
 )
 from src.dedup import (
@@ -140,6 +145,49 @@ class ConfigSecretsAndLlmTests(unittest.TestCase):
                 require_tokens=False,
                 require_channel=False,
             )
+
+    def test_parse_keeps_llm_empty_defaults(self) -> None:
+        # Runtime parsing must NOT inject the starter prompt: an empty prompt still
+        # means "no check" (ADR-020). Starter values live only in the bootstrap config.
+        cfg = parse_config_dict({}, require_tokens=False, require_channel=False)
+
+        self.assertEqual(cfg.llm.base_url, "")
+        self.assertEqual(cfg.llm.model, "")
+        self.assertEqual(cfg.llm.prompt, "")
+
+    def test_starter_prompt_has_only_rules_no_legacy_fields(self) -> None:
+        for legacy in ("chat_id", "message_id", "raw_text", "date_unix", "matched_message_id"):
+            self.assertNotIn(legacy, STARTER_LLM_PROMPT)
+        # the JSON answer contract is owned by code (ADR-021), not by the prompt
+        self.assertNotIn("is_duplicate", STARTER_LLM_PROMPT)
+
+    def test_bootstrap_config_ships_starter_llm_values(self) -> None:
+        data = default_config_dict()
+
+        self.assertEqual(data["llm"]["base_url"], STARTER_LLM_BASE_URL)
+        self.assertEqual(data["llm"]["model"], STARTER_LLM_MODEL)
+        self.assertTrue(data["llm"]["prompt"].strip())
+        self.assertIn("дубликат", data["llm"]["prompt"])
+        # the switch itself stays off until the owner turns it on in the panel
+        self.assertFalse(data["general"]["semantic_dedup"]["enabled"])
+
+        round_trip = parse_config_dict(data, require_tokens=False, require_channel=False)
+        self.assertEqual(round_trip.llm.prompt, STARTER_LLM_PROMPT)
+        self.assertEqual(default_config().llm.prompt, STARTER_LLM_PROMPT)
+
+    def test_config_example_yaml_matches_starter(self) -> None:
+        import yaml
+
+        example = yaml.safe_load(Path("config/config.example.yaml").read_text(encoding="utf-8"))
+
+        self.assertEqual(example["llm"]["base_url"], STARTER_LLM_BASE_URL)
+        self.assertEqual(example["llm"]["model"], STARTER_LLM_MODEL)
+        self.assertEqual(example["llm"]["prompt"].strip(), STARTER_LLM_PROMPT.strip())
+
+        self.assertEqual(example["llm"]["base_url"], STARTER_LLM_BASE_URL)
+        self.assertEqual(example["llm"]["model"], STARTER_LLM_MODEL)
+        self.assertEqual(example["llm"]["prompt"].strip(), STARTER_LLM_PROMPT.strip())
+        self.assertFalse(example["general"]["semantic_dedup"]["enabled"])
 
     def test_config_to_dict_has_no_secrets(self) -> None:
         cfg = Config(

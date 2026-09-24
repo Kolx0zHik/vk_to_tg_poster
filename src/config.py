@@ -9,6 +9,24 @@ import yaml
 
 DEFAULT_TIMEZONE = "Europe/Moscow"
 
+# Starter values written into a fresh bootstrap config (entrypoint) only:
+# visible and editable in the panel; runtime still treats empty prompt as "no check" (ADR-023).
+# Prompt contains ONLY dedup rules: the JSON answer contract is appended by src.dedup (ADR-021).
+STARTER_LLM_BASE_URL = "https://openrouter.ai/api/v1"
+STARTER_LLM_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+STARTER_LLM_PROMPT = """Ты — помощник по поиску смысловых дубликатов перед публикацией поста в Telegram-канал.
+Сравни новый пост с кандидатами (ранее опубликованными постами: дата и текст) и реши, дубликат ли это по смыслу.
+
+Правила:
+1) Дубликат = тот же инфоповод и очень близкий смысл.
+2) Помечай дубликат только при высокой уверенности; при малейшем сомнении — не дубликат.
+3) Похожие темы, но разные новости, детали, даты, места, участники или выводы — не дубликат.
+4) Один и тот же инфоповод, но существенно разные обстоятельства — не дубликат.
+5) «Покупаю» и «продаю» похожее — не дубликат: это разные объявления.
+6) Совпадение темы при разном месте или дате всё равно может быть дубликатом — смотри на суть инфоповода, а не только на дату и место.
+7) Если похожих кандидатов несколько, ориентиром считается самый близкий по смыслу.
+8) В поле reason кратко (до 15 слов на русском) объясни, почему это дубликат или почему нет."""
+
 
 def validate_timezone(value: str) -> str:
     """Normalize and validate an IANA timezone name; raise ConfigError if unknown."""
@@ -99,11 +117,18 @@ class ConfigError(Exception):
 
 
 def default_config() -> Config:
+    # Fresh bootstrap config (entrypoint) ships starter LLM values so a new owner sees a working
+    # prompt to edit in the panel (ADR-023). Parsing keeps empty defaults: an empty prompt still
+    # means "no check" (ADR-020), and semantic_dedup stays disabled until explicitly enabled.
     return Config(
         general=GeneralSettings(),
         vk=VKSettings(),
         telegram=TelegramSettings(),
-        llm=LLMSettings(),
+        llm=LLMSettings(
+            base_url=STARTER_LLM_BASE_URL,
+            model=STARTER_LLM_MODEL,
+            prompt=STARTER_LLM_PROMPT,
+        ),
         communities=[],
     )
 
