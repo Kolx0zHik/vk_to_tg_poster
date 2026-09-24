@@ -1,15 +1,22 @@
 """Loader for a ``.env`` file located next to the config path.
 
-Secrets (VK API token, Telegram bot token, LLM API key) live only in the
-environment, not in ``config.yaml``.  ``load_env_file`` reads a tiny
-``KEY=VALUE`` file (no quoting/escaping needed) and only sets variables that
-are not already present in ``os.environ`` so an explicit Docker/Compose env
-always wins.
+Only secrets (VK API token, Telegram bot token, LLM API key) live in the
+environment; every non-secret setting belongs to ``config.yaml`` and is edited
+from the web UI.  ``load_env_file`` reads a tiny ``KEY=VALUE`` file (no
+quoting/escaping needed) and only sets variables that are not already present
+in ``os.environ`` so an explicit Docker/Compose env always wins.  Legacy
+non-secret keys (``TZ``, ``LLM_DEBUG_LOG``) are ignored for backwards
+compatibility with older ``.env`` files: time zone now comes from
+``general.timezone`` and the debug toggle from
+``general.semantic_dedup.debug_log``.
 """
 
 import os
 from pathlib import Path
 from typing import Optional
+
+# Non-secret settings that used to be read from .env and now live in config.yaml.
+IGNORED_KEYS = frozenset({"TZ", "LLM_DEBUG_LOG"})
 
 
 def env_file_path(config_path: Optional[str]) -> Path:
@@ -45,6 +52,6 @@ def load_env_file(config_path: Optional[str] = None) -> None:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        if not key:
+        if not key or key in IGNORED_KEYS:
             continue
         os.environ.setdefault(key, value.strip())

@@ -50,6 +50,21 @@ class EnvFileTests(unittest.TestCase):
                 self.assertEqual(os.environ["JUST"], "1")
                 self.assertEqual(os.environ["TELEGRAM_BOT_TOKEN"], "keepme")
 
+    def test_load_env_file_ignores_legacy_non_secret_keys(self) -> None:
+        # TZ и LLM_DEBUG_LOG переехали в config.yaml: старые .env не должны их задавать.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = Path(tmpdir) / ".env"
+            env.write_text(
+                "VK_API_TOKEN=vtoken\nTZ=Europe/Berlin\nLLM_DEBUG_LOG=1\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                load_env_file(str(Path(tmpdir) / "config.yaml"))
+
+                self.assertEqual(os.environ["VK_API_TOKEN"], "vtoken")
+                self.assertNotIn("TZ", os.environ)
+                self.assertNotIn("LLM_DEBUG_LOG", os.environ)
+
     def test_missing_env_file_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {}, clear=True):
@@ -94,6 +109,37 @@ class ConfigSecretsAndLlmTests(unittest.TestCase):
 
         self.assertFalse(cfg.general.semantic_dedup.enabled)
         self.assertEqual(cfg.general.semantic_dedup.window_days, 4)
+        self.assertFalse(cfg.general.semantic_dedup.debug_log)
+        self.assertEqual(cfg.general.timezone, "Europe/Moscow")
+
+    def test_timezone_and_debug_log_round_trip(self) -> None:
+        cfg = parse_config_dict(
+            {
+                "general": {
+                    "timezone": "Asia/Almaty",
+                    "semantic_dedup": {"enabled": True, "window_days": 7, "debug_log": True},
+                },
+            },
+            require_tokens=False,
+            require_channel=False,
+        )
+
+        self.assertEqual(cfg.general.timezone, "Asia/Almaty")
+        self.assertTrue(cfg.general.semantic_dedup.debug_log)
+
+        data = config_to_dict(cfg)
+        self.assertEqual(data["general"]["timezone"], "Asia/Almaty")
+        self.assertTrue(data["general"]["semantic_dedup"]["debug_log"])
+
+    def test_unknown_timezone_raises(self) -> None:
+        from src.config import ConfigError
+
+        with self.assertRaises(ConfigError):
+            parse_config_dict(
+                {"general": {"timezone": "Mars/Olympus"}},
+                require_tokens=False,
+                require_channel=False,
+            )
 
     def test_config_to_dict_has_no_secrets(self) -> None:
         cfg = Config(
@@ -261,8 +307,10 @@ def _completion(content: str) -> dict:
 
 class DedupClientTests(unittest.TestCase):
     @staticmethod
-    def _client() -> SemanticDedup:
-        return SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="Системный промпт")
+    def _client(*, debug_log: bool = False) -> SemanticDedup:
+        return SemanticDedup(
+            "https://api.example.com/v1", "model-x", api_key="key", prompt="Системный промпт", debug_log=debug_log
+        )
 
     def test_user_prompt_numbers_candidates(self) -> None:
         prompt = _build_user_prompt(
@@ -443,35 +491,35 @@ class DedupClientTests(unittest.TestCase):
         return [call.args[0] % call.args[1:] for call in info.call_args_list]
 
     def test_debug_env_logs_raw_answer_only_on_parse_failure(self) -> None:
-        client = self._client()
+        client = self._client(debug_log=True)
         client.session.post = lambda url, **kw: FakeLLMResponse(200, _completion("без-json-объекта"))
-        with patch.dict(os.environ, {"LLM_DEBUG_LOG": "1"}):
-            lines = self._capture_info(client)
+        lines = self._capture_info(client)
         self.assertTrue(any("LLM ответ" in line and "без-json-объекта" in line for line in lines), lines)
 
     def test_debug_env_silent_on_good_answer(self) -> None:
-        client = self._client()
+        client = self._client(debug_log=True)
         client.session.post = lambda url, **kw: FakeLLMResponse(
             200,
             _completion('{"is_duplicate":false,"reason":"Нет дублей","matched":0}'),
         )
-        with patch.dict(os.environ, {"LLM_DEBUG_LOG": "1"}):
-            lines = self._capture_info(client)
+        lines = self._capture_info(client)
         self.assertEqual(lines, [])
+
+    def test_debug_flag_defaults_off(self) -> None:
+        client = SemanticDedup("https://api.example.com/v1", "model-x", api_key="key", prompt="промпт")
+        self.assertFalse(client.debug_log)
 
     def test_debug_env_off_logs_nothing(self) -> None:
         client = self._client()
         client.session.post = lambda url, **kw: FakeLLMResponse(200, _completion("просто текст"))
-        with patch.dict(os.environ, {}, clear=True):
-            lines = self._capture_info(client)
+        lines = self._capture_info(client)
         self.assertEqual(lines, [])
 
     def test_debug_env_truncates_answer(self) -> None:
-        client = self._client()
+        client = self._client(debug_log=True)
         long_answer = "х" * 2000
         client.session.post = lambda url, **kw: FakeLLMResponse(200, _completion(long_answer))
-        with patch.dict(os.environ, {"LLM_DEBUG_LOG": "true"}):
-            lines = self._capture_info(client)
+        lines = self._capture_info(client)
         answer_line = next(line for line in lines if "LLM ответ" in line)
         self.assertLessEqual(len(answer_line), 600)
 
@@ -649,23 +697,35 @@ class PipelineDedupTests(unittest.TestCase):
 
 
 class DebugVerdictLogTests(unittest.TestCase):
-    """`LLM_DEBUG_LOG` must not double-log: the "duplicate" line is printed by
-    _publish_pending unconditionally, the debug line only covers "not a duplicate"."""
+    """`semantic_dedup.debug_log` must not double-log: the "duplicate" line is
+    printed by _publish_pending unconditionally, the debug line only covers "not
+    a duplicate"."""
 
-    def _run(self, is_dup: bool) -> tuple[list[str], RecordingTG]:
+    @staticmethod
+    def _config(debug_log: bool) -> Config:
+        return Config(
+            general=GeneralSettings(
+                posts_limit=10,
+                semantic_dedup=SemanticDedupSettings(enabled=True, window_days=4, debug_log=debug_log),
+            ),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@ch"),
+            llm=LLMSettings(base_url="https://api.example.com", model="model-x", prompt="Системный промпт"),
+            communities=[Community(id="club123", name="Club")],
+        )
+
+    def _run(self, is_dup: bool, debug_log: bool = True) -> tuple[list[str], RecordingTG]:
         posts = [Post(id=2, owner_id=-123, date=20, text="новый инфоповод")]
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = Cache(str(Path(tmpdir) / "cache.json"))
             cache.record_post(-123, Post(id=1, owner_id=-123, date=10, text="тот же инфоповод"))
             cache.mark_published("-123_1")
             tg = RecordingTG()
-            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls, patch.dict(
-                os.environ, {"LLM_DEBUG_LOG": "1"}
-            ), patch("src.pipeline.logger.info") as info:
+            with patch("src.pipeline.SemanticDedup") as mock_dedup_cls, patch("src.pipeline.logger.info") as info:
                 mock_dedup_cls.return_value.check.return_value = DedupResult(
                     is_duplicate=is_dup, reason="Проверка", matched_index=1 if is_dup else 0
                 )
-                process_communities(PipelineDedupTests._config(), PagedFakeVK(posts), tg, cache)
+                process_communities(self._config(debug_log), PagedFakeVK(posts), tg, cache)
             lines = [call.args[0] % call.args[1:] for call in info.call_args_list]
             return lines, tg
 
@@ -682,6 +742,11 @@ class DebugVerdictLogTests(unittest.TestCase):
         self.assertEqual(len(verdict_lines), 1)
         self.assertIn("не дубль", verdict_lines[0])
         self.assertEqual([line for line in lines if "дубль, пропущен" in line], [])
+
+    def test_debug_log_off_suppresses_verdict_line(self) -> None:
+        lines, tg = self._run(False, debug_log=False)
+        self.assertEqual(tg.sent_posts, [2])
+        self.assertEqual([line for line in lines if "ИИ-проверка" in line], [])
 
 
 if __name__ == "__main__":

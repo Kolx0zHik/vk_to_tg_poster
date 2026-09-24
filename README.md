@@ -65,18 +65,18 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 
 ## Переменные окружения и `.env`
 
-Все секреты лежат в файле `.env`, расположенном рядом с `CONFIG_PATH` (в докере — монтируемый каталог `data`). Приложение само читает `KEY=VALUE` строки; уже заданные в окружении переменные имеют приоритет. Токены из `config.yaml` больше не читаются вообще — их нужно перенести в `.env`.
+Все секреты лежат в файле `.env`, расположенном рядом с `CONFIG_PATH` (в докере — монтируемый каталог `data`). Приложение само читает `KEY=VALUE` строки; уже заданные в окружении переменные имеют приоритет. Токены из `config.yaml` больше не читаются вообще — их нужно перенести в `.env`. В `.env` держатся только секреты: все настройки (включая часовой пояс и отладочный тумблер ИИ-проверки) живут в `config.yaml` и правятся из веб-панели. `CONFIG_PATH` — единственный путь, который читается из окружения при старте.
 
 | Переменная | Где читается | Смысл |
 |---|---|---|
 | `CONFIG_PATH` | `src/main.py`, `src/web.py`, `entrypoint.sh` | путь к YAML-конфигу, по умолчанию `data/config.yaml` |
 | `RUN_MODE` | `src/main.py`, `entrypoint.sh` | `scheduled` (по умолчанию) или `once` |
 | `PORT` | `entrypoint.sh` | порт веб-панели, по умолчанию `8222` |
-| `TZ` | `src/logger.py` | таймзона логов/расписания, по умолчанию `Europe/Moscow` |
 | `VK_API_TOKEN` | `src/envfile.py`, `src/main.py`, `src/web.py` | VK API token (секрет) |
 | `TELEGRAM_BOT_TOKEN` | `src/envfile.py`, `src/main.py` | токен Telegram-бота (секрет) |
 | `LLM_API_KEY` | `src/envfile.py`, `src/pipeline.py` | ключ OpenAI-совместимого API для семантической проверки дублей |
-| `LLM_DEBUG_LOG` | `src/dedup.py`, `src/pipeline.py` | временный тумблер для тестов: `1`/`true` — писать в лог вердикт «не дубль» по каждому посту (дубли логируются и без него); сырой ответ LLM — только если он не разобран |
+
+Часовой пояс логов и расписания задаётся настройкой `general.timezone` (панель: «Основные настройки» → «Часовой пояс», по умолчанию `Europe/Moscow`); подробный лог ИИ-проверки — тумблером `general.semantic_dedup.debug_log` (панель: «ИИ-проверка»). Старые переменные `TZ` и `LLM_DEBUG_LOG` из `.env` больше не читаются и молча игнорируются.
 
 Пример `.env` — в файле `.env.example`.
 
@@ -85,7 +85,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 | Путь | Что это |
 |---|---|
 | `data/config.yaml` | конфигурация (пишется и панелью, и вручную); секретов в нём нет |
-| `data/.env` | секреты и настройки: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `LLM_DEBUG_LOG`, `TZ` (в git не попадает) |
+| `data/.env` | только секреты: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` (в git не попадает) |
 | `data/cache.json` | состояние пайплайна: посты, baseline сообществ, кэш owner id |
 | `data/backfill.json` | заявки на дозаливку/возобновление, их пишет веб и потребляет планировщик |
 | `data/avatars.json` | кэш имён и аватаров сообществ |
@@ -96,7 +96,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 ## Проверка изменений
 
 ```bash
-python -m unittest discover -s tests    # 114 тестов
+python -m unittest discover -s tests    # 129 тестов
 node --check static/script.js           # синтаксис фронтенда
 ```
 

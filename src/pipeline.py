@@ -6,7 +6,7 @@ from typing import List
 from .backfill import MAX_BACKFILL_POSTS, BackfillRequests, compute_baseline, normalize_mode
 from .cache import Cache
 from .config import Config, ContentTypes
-from .dedup import DedupError, SemanticDedup, debug_log_enabled
+from .dedup import DedupError, SemanticDedup
 from .models import Post
 from .tg_client import TelegramClient
 from .vk_client import VKClient
@@ -131,19 +131,20 @@ def _dedup_check(
     cache: Cache,
     dedup: SemanticDedup,
     window_days: int,
+    debug_log: bool = False,
 ) -> tuple[bool, str]:
     """Return (is_duplicate, reason) for a post against the candidate pool.
 
     Fail-open: on any error we log a warning and treat the post as NOT a
     duplicate so publication is never blocked by the checker.
 
-    When ``LLM_DEBUG_LOG`` is set, also log the "not a duplicate" verdict for
+    When ``debug_log`` is set, also log the "not a duplicate" verdict for
     every text post (the "duplicate" line is already logged unconditionally by
     ``_publish_pending``, so it is not repeated here).
     """
     pool_items, candidates = _candidate_pool(cache, window_days)
     if not candidates:
-        if debug_log_enabled():
+        if debug_log:
             logger.info("ИИ-проверка поста %s: кандидатов в окне нет, пропущено", post.id)
         return False, ""
 
@@ -166,7 +167,7 @@ def _dedup_check(
             matched = pool_items[idx - 1]
             suffix = f"кандидат {idx} (пост {matched['post_id']} из {matched['owner_id']})"
             reason = f"{reason}; {suffix}" if reason else suffix
-    if debug_log_enabled() and not result.is_duplicate:
+    if debug_log and not result.is_duplicate:
         logger.info(
             "ИИ-проверка поста %s: не дубль (причина: %s; кандидатов: %s)",
             post.id,
@@ -197,7 +198,7 @@ def _publish_pending(
             continue
         window_days = general.semantic_dedup.window_days
         if general.semantic_dedup.enabled and dedup is not None and _post_text(post).strip():
-            is_dup, reason = _dedup_check(post, cache, dedup, window_days)
+            is_dup, reason = _dedup_check(post, cache, dedup, window_days, debug_log=general.semantic_dedup.debug_log)
             if is_dup:
                 cache.mark_skipped(key)
                 stats["dedup_skipped"] += 1
@@ -364,6 +365,7 @@ def process_communities(
                 model=config.llm.model,
                 api_key=os.getenv("LLM_API_KEY", ""),
                 prompt=config.llm.prompt,
+                debug_log=config.general.semantic_dedup.debug_log,
             )
         _publish_pending(
             cache,

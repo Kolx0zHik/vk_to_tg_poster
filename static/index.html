@@ -123,6 +123,14 @@
 
                     <div class="form-group">
                         <span class="label-text">
+                            Часовой пояс
+                            <small>Для меток времени в логах и расписания. Например Europe/Moscow.</small>
+                        </span>
+                        <input type="text" id="timezone" placeholder="Europe/Moscow">
+                    </div>
+
+                    <div class="form-group">
+                        <span class="label-text">
                             Telegram канал
                             <small>Куда постить: @канал или ID чата.</small>
                         </span>
@@ -283,6 +291,17 @@
                         <small>Только правила: что считать дублем, а что нет. Формат ответа (JSON) система задаёт сама. Без промпта проверка не работает.</small>
                     </span>
                     <textarea id="aiPrompt" rows="8" placeholder="Ты — помощник по удалению дубликатов..."></textarea>
+                </div>
+
+                <div class="switch-group">
+                    <label class="switch-label">
+                        <span class="label-text">
+                            Подробный лог проверки
+                            <small>Писать в лог вердикт «не дубль» по каждому посту. Временно, для отладки.</small>
+                        </span>
+                        <input type="checkbox" id="aiDebugLog">
+                        <span class="slider"></span>
+                    </label>
                 </div>
 
                 <div class="form-group">

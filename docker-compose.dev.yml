@@ -6,8 +6,5 @@ services:
     restart: unless-stopped
     ports:
       - "8222:8222"
-    environment:
-      # Optional: container timezone for logs and scheduler
-      TZ: Europe/Moscow
     volumes:
       - ./data:/app/data

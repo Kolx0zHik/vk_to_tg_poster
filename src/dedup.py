@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -39,10 +38,6 @@ CANDIDATE_TAIL_MIN = 200
 # by PublishedText.MAX_LEN in src/cache.py; the new post is not).
 NEW_POST_TEXT_MAX = 2000
 
-
-def debug_log_enabled() -> bool:
-    """Temporary test knob: dump raw LLM answers into the log on INFO."""
-    return os.getenv("LLM_DEBUG_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 @dataclass
 class DedupResult:
@@ -179,12 +174,13 @@ class SemanticDedup:
     semantic check entirely).
     """
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT):
+    def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT, debug_log: bool = False):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.prompt = prompt.strip()
         self.timeout = timeout
+        self.debug_log = bool(debug_log)
         self.session = requests.Session()
 
     def _is_configured(self) -> bool:
@@ -247,7 +243,7 @@ class SemanticDedup:
         try:
             return _parse_result(_extract_json(content), len(candidates))
         except DedupError:
-            if debug_log_enabled():
+            if self.debug_log:
                 flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
                 logger.info("LLM ответ (кандидатов %s): %s", len(candidates), flat)
             raise

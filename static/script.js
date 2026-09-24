@@ -18,6 +18,7 @@ document.addEventListener("DOMContentLoaded", () => {
         refreshAvatars: document.getElementById("refreshAvatars"),
         postsCount: document.getElementById("postsCount"),
         logRetention: document.getElementById("logRetention"),
+        timezone: document.getElementById("timezone"),
         blockedKeywords: document.getElementById("blockedKeywords"),
         tgChannel: document.getElementById("tgChannel"),
         saveSettingsBtn: document.getElementById("saveSettingsBtn"),
@@ -30,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
         aiBaseUrl: document.getElementById("aiBaseUrl"),
         aiModel: document.getElementById("aiModel"),
         aiWindow: document.getElementById("aiWindow"),
+        aiDebugLog: document.getElementById("aiDebugLog"),
         aiPrompt: document.getElementById("aiPrompt"),
 
         newGroupInput: document.getElementById("newGroupInput"),
@@ -87,6 +89,24 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
             els.toast.classList.add("hidden");
         }, 3000);
+    }
+
+    // FastAPI отдаёт то строку (HTTPException), то список (валидация Pydantic 422).
+    function apiErrorMessage(detail, fallback) {
+        if (typeof detail === "string" && detail) {
+            return detail;
+        }
+        if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+            return detail.message || fallback;
+        }
+        if (Array.isArray(detail) && detail.length > 0) {
+            const first = detail[0] || {};
+            const message = String(first.msg || "").replace(/^Value error,\s*/i, "").trim();
+            if (message) {
+                return message;
+            }
+        }
+        return fallback;
     }
 
     function cronFromUI() {
@@ -320,6 +340,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 log_level: general.log_level || "INFO",
                 log_rotation: general.log_rotation || { max_bytes: 10485760, backup_count: 7 },
                 log_retention_days: parseInt(els.logRetention.value, 10) || 7,
+                timezone: (els.timezone.value || "").trim() || "Europe/Moscow",
                 blocked_keywords: els.filterKeywords.checked
                     ? (els.blockedKeywords.value || "")
                           .split("\n")
@@ -330,6 +351,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 semantic_dedup: {
                     enabled: els.aiEnabled.checked,
                     window_days: parseInt(els.aiWindow.value, 10) || 4,
+                    debug_log: els.aiDebugLog.checked,
                 },
             },
             vk: {
@@ -357,7 +379,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             if (!res.ok) {
                 const detail = await res.json().catch(() => ({}));
-                showToast(detail?.detail?.message || "Ошибка сохранения", true);
+                showToast(apiErrorMessage(detail?.detail, "Ошибка сохранения"), true);
                 return false;
             }
             return true;
@@ -405,6 +427,7 @@ document.addEventListener("DOMContentLoaded", () => {
             updateCronUI(data.general?.cron || "*/10 * * * *");
             els.postsCount.value = data.general?.posts_limit || 10;
             els.logRetention.value = data.general?.log_retention_days || 7;
+            els.timezone.value = data.general?.timezone || "Europe/Moscow";
             els.refreshAvatars.checked = data.general?.refresh_avatars !== false;
             els.blockedKeywords.value = (data.general?.blocked_keywords || []).join("\n");
             els.filterKeywords.checked = (data.general?.blocked_keywords || []).length > 0;
@@ -413,6 +436,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const dedup = data.general?.semantic_dedup || {};
             els.aiEnabled.checked = Boolean(dedup.enabled);
             els.aiWindow.value = dedup.window_days || 4;
+            els.aiDebugLog.checked = Boolean(dedup.debug_log);
             els.aiBaseUrl.value = data.llm?.base_url || "";
             els.aiModel.value = data.llm?.model || "";
             els.aiPrompt.value = data.llm?.prompt || "";
@@ -636,7 +660,7 @@ document.addEventListener("DOMContentLoaded", () => {
             
             if (!res.ok) {
                 const detail = await res.json().catch(() => ({}));
-                showToast(detail?.detail?.message || "Ошибка удаления", true);
+                showToast(apiErrorMessage(detail?.detail, "Ошибка удаления"), true);
                 return;
             }
             

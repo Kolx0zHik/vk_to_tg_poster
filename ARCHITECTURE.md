@@ -36,10 +36,10 @@
 | `src/dedup.py` | семантическая проверка дублей через LLM | `SemanticDedup.check`, `DedupResult`, `DedupError` (OpenAI-совместимый `/chat/completions`) |
 | `src/backfill.py` | заявки на дозаливку и возобновление | `BackfillRequests`, `compute_baseline`, `requests_path_for` |
 | `src/config.py` | схема и (де)сериализация YAML | `load_config`, `parse_config_dict`, `config_to_dict`, `save_config_dict`, `ConfigError`, `SemanticDedupSettings`, `LLMSettings` |
-| `src/envfile.py` | загрузка секретов из `.env` рядом с конфигом | `load_env_file`, `env_file_path` |
+| `src/envfile.py` | загрузка секретов из `.env` рядом с конфигом | `load_env_file`, `env_file_path`, `IGNORED_KEYS` (TZ/LLM_DEBUG_LOG игнорируются) |
 | `src/web.py` | веб-панель и API | эндпоинты ниже, `_load_ui_config`, `_fetch_vk_info`, `_normalize_owner_id` |
 | `src/vk_ids.py` | нормализация VK-ссылок и id без сети | `normalize_community_key`, `parse_owner_id`, `normalize_display_id` |
-| `src/logger.py` | логи, маскирование секретов, retention | `configure_logging`, `redact_secrets`, `RedactingFormatter`, `CompactFileFormatter` |
+| `src/logger.py` | логи, маскирование секретов, retention, часовой пояс из конфига | `configure_logging`, `apply_timezone`, `redact_secrets`, `RedactingFormatter`, `CompactFileFormatter` |
 | `src/models.py` | доменные модели | `Post` (`dedup_key`, `vk_link`), `Attachment` |
 | `src/version.py` | версия из файла `VERSION` | `get_version` |
 
@@ -147,6 +147,7 @@ general:
   cache_file: data/cache.json
   log_file: data/logs/poster.log
   log_level: INFO               # DEBUG/INFO/WARNING/ERROR/CRITICAL
+  timezone: Europe/Moscow       # IANA-таймзона логов и расписания (была env TZ)
   log_rotation: { max_bytes: 10485760, backup_count: 5 }
   blocked_keywords: []          # фильтр по тексту и заголовкам вложений
   refresh_avatars: true
@@ -154,6 +155,7 @@ general:
   semantic_dedup:
     enabled: false              # ИИ-проверка дублей перед публикацией
     window_days: 4              # окно поиска кандидатов
+    debug_log: false            # временный тумблер: писать вердикт «не дубль» по каждому посту
 llm:                            # не секрет: base_url, модель и промпт задаются из панели
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
@@ -169,6 +171,9 @@ communities:
 
 - запись конфига атомарная (`save_config_dict`), ошибки разбора — `ConfigError` с человекочитаемым текстом;
 - секретов в конфиге нет: `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` читаются только из `.env`/окружения;
+- в `.env` держатся только секреты: все настройки (таймзона `general.timezone`, отладочный `general.semantic_dedup.debug_log`)
+  живут здесь и правятся из панели; legacy-переменные `TZ` и `LLM_DEBUG_LOG` больше не читаются (`envfile.IGNORED_KEYS`),
+  часовой пояс применяется через `apply_timezone` (`src/logger.py`) при старте и перечитывается в цикле планировщика;
 - ключ LLM (`LLM_API_KEY`) в панели не редактируется — только `base_url`, `model` и системный промпт (`prompt`);
 - проверка дублей выключена по умолчанию и включается тумблером в модалке «ИИ-проверка»; системный промпт обязателен:
   пустой `llm.prompt` при включённом тумблере отключает проверку (pipeline пишет предупреждение, `POST /api/config`
@@ -183,7 +188,7 @@ communities:
 |---|---|---|---|
 | GET | `/` | веб-панель | `static/index.html` |
 | GET | `/api/config` | конфиг для UI | `general` (в т.ч. `semantic_dedup`), `llm.{base_url,model,prompt}`, `vk.token_set`, `telegram.{channel_id,bot_token_set}`, `llm_api_key_set`, `communities[]`, `avatar_cache{}`, `version` |
-| POST | `/api/config` | сохранить конфиг | `SaveRequest` (`general`, `telegram.channel_id`, `llm`, `communities`); секреты не принимаются, id нормализуются, дубли → 400 |
+| POST | `/api/config` | сохранить конфиг | `SaveRequest` (`general` — в т.ч. `timezone` и `semantic_dedup.debug_log`, `telegram.channel_id`, `llm`, `communities`); секреты не принимаются, id нормализуются, дубли → 400, неизвестная таймзона → 422 |
 | DELETE | `/api/community/{community_id}` | удалить сообщество из конфига | id нормализуется (`_normalize_owner_id`), запись удаляется и конфиг сохраняется сразу; 404 — сообщества нет, 400 — ошибка разбора; ответ `{ok, deleted_id}`; `cache.json` не трогается |
 | GET | `/api/community_info?value=` | имя/аватар сообщества | `{id, name, photo}`; нужен VK-токен, кэш 24 ч, при сбое — `{id: value, name: "", photo: null}` |
 | POST | `/api/backfill` | заявка на дозаливку | `{id, mode: none|posts|days, value}`; `posts` ≤ 100, `days` ≤ 365 |
@@ -197,9 +202,11 @@ communities:
 Одна страница, ванильный JS, состояние в объекте `state`:
 
 - шапка: кнопки «ИИ-проверка» и «Логи» — обе открывают модальные окна; модалки «Токены» больше нет;
-- «ИИ-проверка» — тумблер включения, `base_url`, `model`, окно сравнения (`window_days`) и системный промпт
-  (`prompt`, обязателен при включённой проверке: без него проверка не работает); подсказка, что ключ `LLM_API_KEY` задаётся в `.env`;
-- «Основные настройки» — отдельная карточка с общей кнопкой «Сохранить»; там же поле «Telegram канал»;
+- «ИИ-проверка» — тумблер включения, `base_url`, `model`, окно сравнения (`window_days`), тумблер подробного
+  лога (`debug_log`) и системный промпт (`prompt`, обязателен при включённой проверке: без него проверка не
+  работает); подсказка, что ключ `LLM_API_KEY` задаётся в `.env`;
+- «Основные настройки» — отдельная карточка с общей кнопкой «Сохранить»; там же поле «Telegram канал» и
+  поле «Часовой пояс» (`timezone`);
 - «Отслеживаемые группы» — панель «список + настройки»: слева поиск и список (без ID и без ссылок),
   справа статус сегментом «Активно/На паузе», типы контента иконками, ссылка на сообщество в заголовке;
 - «Только новые» из модалки добавления и снятие с паузы отправляют `POST /api/backfill`;
@@ -239,13 +246,16 @@ Dockerfile многоступенчатый: зависимости ставят
   1.0.0, токен мог остаться — см. [STATE.md](./STATE.md).
 - Секреты живут только в `.env`/окружении; не добавляйте `token`/`bot_token` обратно в `config.yaml` и не
   пишите их из веба. Приложение читает `.env` рядом с конфигом, явные env-переменные важнее файла.
+  В `.env` — только секреты: настройки (таймзона, отладочный тумблер ИИ-проверки) держим в `config.yaml`,
+  legacy-переменные `TZ`/`LLM_DEBUG_LOG` молча игнорируются при загрузке.
 - ИИ-проверка дублей — совещательная: она только помечает пост `skipped`. При недоступном LLM, пустых
   `base_url`/`model`, пустом `llm.prompt` или отсутствии `LLM_API_KEY` публикация продолжается как обычно
   (fail-open; пустой промпт отключает проверку целиком). Пул
   кандидатов берётся из `text`, сохранённого при публикации; текст старше `window_days` вычищается в начале
   каждого прогона (и при выключенной проверке), а всего текстов хранится не больше `TEXT_POOL_CAP` —
   подробности и про `archived`-tombstones см. §5 и ADR-019.
-  - Временный тумблер `LLM_DEBUG_LOG` (`1`/`true`/`yes`/`on`; см. README): на INFO пишет вердикт «не дубль»
+  - Временный тумблер `general.semantic_dedup.debug_log` (настраивается в панели; раньше был env `LLM_DEBUG_LOG`):
+    на INFO пишет вердикт «не дубль»
     с причиной и факт пустого пула кандидатов по каждому посту; дубли логируются единственной строкой
     `_publish_pending` независимо от тумблера, а сырой ответ LLM пишется только когда он не разбирается
-    как JSON (до 500 символов). Без переменной — тишина, как раньше.
+    как JSON (до 500 символов). Без тумблера — тишина, как раньше.

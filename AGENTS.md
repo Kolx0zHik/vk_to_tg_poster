@@ -51,8 +51,11 @@ Important environment variables:
 - `RUN_MODE` is `scheduled` or `once`
 - `PORT` defaults to `8222`
 - `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` — secrets, read only from the environment/`.env`
-- `LLM_DEBUG_LOG` — temporary flag for testing semantic deduplication (1/true/yes/on)
-- `TZ` affects logging timestamps and defaults to `Europe/Moscow`
+
+`.env` holds secrets only. Non-secret settings live in `config.yaml` and are edited from the web UI: the log/schedule
+time zone is `general.timezone` (was env `TZ`) and the semantic-dedup test switch is `general.semantic_dedup.debug_log`
+(was env `LLM_DEBUG_LOG`); see ADR-022. `src/envfile.py` silently ignores those legacy keys. `RUN_MODE` and `PORT`
+stay container launch parameters, and `CONFIG_PATH` is bootstrap — those are not config-file settings.
 
 Secrets live in a `.env` file next to `CONFIG_PATH` (in Docker the mounted `data/` directory), loaded by
 `src/envfile.py`; explicit environment variables win. `config.yaml` never stores tokens, and tokens in an old
@@ -91,8 +94,9 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - Keep `log_retention_days` and other logging-related general settings aligned between `src.config` and `src.web`.
 - `ContentTypes` defaults to `audio: true` in code while the UI writes `audio: false`; do not "fix" this
   silently — it is recorded in `STATE.md`.
-- `general.semantic_dedup` (`enabled`, `window_days`) and `llm` (`base_url`, `model`, `prompt`) are non-secret
-  and edited from the web UI; keep `src.config`, `src.web` models and `static/script.js` in sync. The system
+- `general.semantic_dedup` (`enabled`, `window_days`, `debug_log`), `general.timezone` and `llm` (`base_url`,
+  `model`, `prompt`) are non-secret and edited from the web UI; keep `src.config`, `src.web` models and
+  `static/script.js` in sync. The system
   prompt is mandatory: there is no built-in default, an empty `llm.prompt` disables the LLM check entirely
   (pipeline logs a warning; `POST /api/config` rejects "enabled without prompt" with 400).
 
@@ -174,8 +178,8 @@ UI conventions in `static/`:
 - Plain HTML/CSS/JS, no build step, no npm, no external framework.
 - All user-facing strings are Russian; keep the current tone.
 - Tokens are never edited in the UI: they live in `.env`. The header has an "ИИ-проверка" modal
-  (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days`) and the Telegram
-  channel field sits in the main settings card.
+  (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days/debug_log`) and the
+  Telegram channel field sits in the main settings card (with the `general.timezone` field).
 - The groups panel is master-detail: left list (search + names), right settings (status segment, content
   type icon toggles). No checkboxes, no raw community ids anywhere, community name links to VK.
 - Adding a community happens in a modal (same style as the old tokens modal) with preset amount buttons and
@@ -243,7 +247,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (100 as of 1.1.14)
+python -m unittest discover -s tests          # unit tests (129 on feature/semantic-dedup)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main

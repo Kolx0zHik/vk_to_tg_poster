@@ -7,6 +7,20 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+DEFAULT_TIMEZONE = "Europe/Moscow"
+
+
+def validate_timezone(value: str) -> str:
+    """Normalize and validate an IANA timezone name; raise ConfigError if unknown."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    name = (value or "").strip() or DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"Неизвестный часовой пояс: {name}") from None
+    return name
+
 
 @dataclass
 class LogRotationSettings:
@@ -18,6 +32,7 @@ class LogRotationSettings:
 class SemanticDedupSettings:
     enabled: bool = False
     window_days: int = 4
+    debug_log: bool = False
 
 
 @dataclass
@@ -28,6 +43,7 @@ class GeneralSettings:
     cache_file: str = "data/cache.json"
     log_file: str = "data/logs/poster.log"
     log_level: str = "INFO"
+    timezone: str = "Europe/Moscow"
     log_rotation: LogRotationSettings = field(default_factory=LogRotationSettings)
     blocked_keywords: List[str] = field(default_factory=list)
     refresh_avatars: bool = True
@@ -141,6 +157,7 @@ def _parse_semantic_dedup(raw: Dict) -> SemanticDedupSettings:
             "semantic_dedup.window_days",
             SemanticDedupSettings.window_days,
         ),
+        debug_log=bool(raw.get("debug_log", False)),
     )
 
 
@@ -164,6 +181,7 @@ def _parse_general(raw: Dict) -> GeneralSettings:
         cache_file=raw.get("cache_file", GeneralSettings.cache_file),
         log_file=raw.get("log_file", GeneralSettings.log_file),
         log_level=raw.get("log_level", GeneralSettings.log_level),
+        timezone=validate_timezone(str(raw.get("timezone", GeneralSettings.timezone) or "")),
         log_rotation=rotation,
         blocked_keywords=blocked_list,
         refresh_avatars=bool(raw.get("refresh_avatars", True)),
@@ -268,6 +286,7 @@ def config_to_dict(config: Config) -> Dict:
             "cache_file": config.general.cache_file,
             "log_file": config.general.log_file,
             "log_level": config.general.log_level,
+            "timezone": config.general.timezone,
             "log_rotation": {
                 "max_bytes": config.general.log_rotation.max_bytes,
                 "backup_count": config.general.log_rotation.backup_count,
@@ -278,6 +297,7 @@ def config_to_dict(config: Config) -> Dict:
             "semantic_dedup": {
                 "enabled": config.general.semantic_dedup.enabled,
                 "window_days": config.general.semantic_dedup.window_days,
+                "debug_log": config.general.semantic_dedup.debug_log,
             },
         },
         "vk": {},

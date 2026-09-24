@@ -1212,7 +1212,8 @@ class SaveConfigNormalizationTests(unittest.TestCase):
         payload = web.SaveRequest(
             general=web.GeneralModel(
                 cron="*/10 * * * *",
-                semantic_dedup=web.SemanticDedupModel(enabled=True, window_days=7),
+                timezone="Asia/Almaty",
+                semantic_dedup=web.SemanticDedupModel(enabled=True, window_days=7, debug_log=True),
             ),
             vk=web.TokenModel(),
             telegram=web.TelegramModel(channel_id="@channel"),
@@ -1229,9 +1230,30 @@ class SaveConfigNormalizationTests(unittest.TestCase):
             self.assertEqual(data["llm"]["model"], "model-x")
             self.assertTrue(data["general"]["semantic_dedup"]["enabled"])
             self.assertEqual(data["general"]["semantic_dedup"]["window_days"], 7)
+            self.assertTrue(data["general"]["semantic_dedup"]["debug_log"])
+            self.assertEqual(data["general"]["timezone"], "Asia/Almaty")
             saved = web.load_config(config_path, require_tokens=False, require_channel=False)
             self.assertEqual(saved.llm.prompt, "мой промпт")
             self.assertTrue(saved.general.semantic_dedup.enabled)
+            self.assertTrue(saved.general.semantic_dedup.debug_log)
+            self.assertEqual(saved.general.timezone, "Asia/Almaty")
+
+    def test_save_rejects_unknown_timezone(self) -> None:
+        # валидация таймзона идёт через parse_config_dict внутри save_config
+        # (в тестах pydantic — заглушка, поэтому field_validator не срабатывает)
+        payload = web.SaveRequest(
+            general=web.GeneralModel(cron="*/10 * * * *", timezone="Mars/Olympus"),
+            vk=web.TokenModel(),
+            telegram=web.TelegramModel(channel_id="@channel"),
+            communities=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            with patch.object(web, "CONFIG_PATH", config_path):
+                with self.assertRaises(Exception) as ctx:
+                    asyncio.run(web.save_config(payload))
+            self.assertIn("часовой пояс", str(ctx.exception))
+            self.assertFalse(config_path.exists())
 
     def test_save_rejects_semantic_dedup_without_prompt(self) -> None:
         from fastapi import HTTPException

@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .backfill import BackfillRequests, requests_path_for
-from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict
+from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict, validate_timezone
 from .envfile import load_env_file
 from .logger import redact_secrets
 from .version import get_version
@@ -39,6 +39,7 @@ class LogRotationModel(BaseModel):
 class SemanticDedupModel(BaseModel):
     enabled: bool = False
     window_days: int = Field(4, ge=1, le=30)
+    debug_log: bool = False
 
 
 class GeneralModel(BaseModel):
@@ -48,6 +49,7 @@ class GeneralModel(BaseModel):
     cache_file: str = "data/cache.json"
     log_file: str = "data/logs/poster.log"
     log_level: str = Field("INFO", pattern=r"(?i)^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+    timezone: str = "Europe/Moscow"
     log_rotation: LogRotationModel = LogRotationModel()
     blocked_keywords: List[str] = Field(default_factory=list)
     refresh_avatars: bool = True
@@ -60,6 +62,14 @@ class GeneralModel(BaseModel):
         if not value.strip():
             raise ValueError("Cron выражение не должно быть пустым")
         return value
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_valid(cls, value: str) -> str:
+        try:
+            return validate_timezone(value)
+        except ConfigError as exc:
+            raise ValueError(str(exc)) from None
 
 
 class TokenModel(BaseModel):

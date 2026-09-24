@@ -10,7 +10,7 @@ from .backfill import BackfillRequests, requests_path_for
 from .cache import Cache
 from .config import ConfigError, load_config
 from .envfile import load_env_file
-from .logger import configure_logging
+from .logger import apply_timezone, configure_logging
 from .pipeline import process_communities
 from .tg_client import TelegramClient
 from .version import get_version
@@ -55,6 +55,7 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
             # reload config to pick up updated cron/content/token changes
             load_env_file(config_path)
             cfg = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True)
+            apply_timezone(cfg.general.timezone)
             if not os.getenv("VK_API_TOKEN", "") or not os.getenv("TELEGRAM_BOT_TOKEN", "") or not cfg.telegram.channel_id:
                 logger.warning("Токены VK/Telegram или канал не заданы, публикация пропущена")
             else:
@@ -65,9 +66,11 @@ def run_with_scheduler(cron_expr: str, config_path: str, logger) -> None:
                     Cache(cfg.general.cache_file),
                     BackfillRequests(requests_path_for(cfg.general.cache_file)),
                 )
-            # refresh cron from file for next iteration
+            # refresh cron/timezone from file for next iteration
             try:
-                cron_expr = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True).general.cron
+                next_cfg = load_config(config_path, require_tokens=False, require_channel=False, allow_missing=True)
+                cron_expr = next_cfg.general.cron
+                apply_timezone(next_cfg.general.timezone)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Не удалось перечитать cron из конфига: %s (оставляем прошлое: %s)", exc, cron_expr)
         except Exception as exc:  # noqa: BLE001

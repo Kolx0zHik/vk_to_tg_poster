@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Tuple
 
-from .config import GeneralSettings
+from .config import DEFAULT_TIMEZONE, ConfigError, GeneralSettings, validate_timezone
 
 
 REDACTED = "<redacted>"
@@ -66,15 +66,24 @@ class CompactFileFormatter(RedactingFormatter):
             record.stack_info = stack_info
 
 
-def configure_logging(settings: GeneralSettings) -> logging.Logger:
-    # Ensure local timezone (default to Europe/Moscow if not provided)
-    tz = os.environ.get("TZ", "Europe/Moscow")
-    os.environ["TZ"] = tz
+def apply_timezone(tz: str) -> str:
+    """Set the process timezone from a config value (fallback: default)."""
+    try:
+        name = validate_timezone(tz)
+    except ConfigError:
+        name = DEFAULT_TIMEZONE
+    os.environ["TZ"] = name
     try:
         time.tzset()
     except AttributeError:
         # tzset is not available on some platforms (e.g., Windows containers)
         pass
+    return name
+
+
+def configure_logging(settings: GeneralSettings) -> logging.Logger:
+    # Local timezone for logs and schedule, taken from config (default Europe/Moscow)
+    apply_timezone(settings.timezone)
 
     log_path = Path(settings.log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)

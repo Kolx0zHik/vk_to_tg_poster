@@ -5,6 +5,7 @@ general:
   cache_file: data/cache.json
   log_file: data/logs/poster.log
   log_level: INFO
+  timezone: Europe/Moscow
   log_rotation:
     max_bytes: 10485760
     backup_count: 5
@@ -14,6 +15,7 @@ general:
   semantic_dedup:
     enabled: false
     window_days: 4
+    debug_log: false   # временно: писать в лог вердикт «не дубль» по каждому посту
 llm:
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"
