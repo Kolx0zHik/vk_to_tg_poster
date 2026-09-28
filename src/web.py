@@ -24,6 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", BASE_DIR / "data/config.yaml"))
 AVATAR_CACHE = BASE_DIR / "data/avatars.json"
 AVATAR_TTL_SECONDS = 24 * 3600
+LLM_MODELS_TIMEOUT = 15
 
 app = FastAPI(title="VK → Telegram Poster", version=get_version())
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -481,6 +482,58 @@ class BackfillModel(BaseModel):
     id: str
     mode: str = "none"
     value: int = 0
+
+
+@app.get("/api/llm/models")
+async def llm_models(base_url: str = "") -> dict:
+    """List models from an OpenAI-compatible provider using LLM_API_KEY."""
+    load_env_file(CONFIG_PATH)
+    key = os.getenv("LLM_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=401, detail={"message": "Ключ LLM_API_KEY не задан в .env"})
+
+    try:
+        cfg = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+        configured_base_url = (cfg.llm.base_url or "").strip()
+    except Exception:
+        configured_base_url = ""
+    target = (base_url.strip() or configured_base_url).strip()
+    if not target:
+        raise HTTPException(status_code=400, detail={"message": "Укажите Base URL провайдера"})
+    if target.endswith("/chat/completions"):
+        target = target[: -len("/chat/completions")]
+    if not target.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail={"message": "Base URL должен начинаться с http:// или https://"})
+
+    url = f"{target.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=LLM_MODELS_TIMEOUT)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail={"message": f"Не удалось подключиться к провайдеру: {type(exc).__name__}"}) from None
+    if resp.status_code in {401, 403}:
+        raise HTTPException(status_code=401, detail={"message": "Провайдер отклонил ключ LLM_API_KEY"})
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail={"message": f"Провайдер вернул HTTP {resp.status_code}"})
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail={"message": "Провайдер вернул не-JSON ответ"}) from None
+
+    raw = data.get("data") if isinstance(data, dict) else None
+    models = []
+    if isinstance(raw, list):
+        for item in raw:
+            model_id = item.get("id") if isinstance(item, dict) else item
+            if isinstance(model_id, str) and model_id.strip():
+                models.append(model_id.strip())
+    return {"models": sorted(set(models)), "base_url": target.rstrip("/")}
 
 
 @app.post("/api/backfill")

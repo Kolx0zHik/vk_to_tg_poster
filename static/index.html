@@ -262,9 +262,12 @@
                 <div class="form-group">
                     <span class="label-text">
                         Модель
-                        <small>Например inclusionai/ling-3.0-flash-sante:free</small>
+                        <small>Список моделей подтягивается по ключу LLM_API_KEY — можно ввести текст для фильтра.</small>
                     </span>
-                    <input type="text" id="aiModel" placeholder="model-name">
+                    <div class="combobox" id="aiModelCombobox">
+                        <input type="text" id="aiModel" placeholder="model-name" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="aiModelList">
+                        <div class="combobox-list hidden" id="aiModelList"></div>
+                    </div>
                 </div>
 
                 <div class="form-group">

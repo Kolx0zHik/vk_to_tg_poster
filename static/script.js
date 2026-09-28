@@ -8,6 +8,11 @@ document.addEventListener("DOMContentLoaded", () => {
         addScope: "none",
         addAmount: 0,
         addTypes: {},
+        modelOptions: [],
+        modelFetchKey: "",
+        modelFetchError: "",
+        modelFetchInFlight: false,
+        modelFetchId: 0,
     };
 
     const els = {
@@ -30,6 +35,8 @@ document.addEventListener("DOMContentLoaded", () => {
         aiEnabled: document.getElementById("aiEnabled"),
         aiBaseUrl: document.getElementById("aiBaseUrl"),
         aiModel: document.getElementById("aiModel"),
+        aiModelCombobox: document.getElementById("aiModelCombobox"),
+        aiModelList: document.getElementById("aiModelList"),
         aiWindow: document.getElementById("aiWindow"),
         aiDebugLog: document.getElementById("aiDebugLog"),
         aiPrompt: document.getElementById("aiPrompt"),
@@ -107,6 +114,110 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
         return fallback;
+    }
+
+    function closeModelList() {
+        if (!els.aiModelList) return;
+        els.aiModelList.classList.add("hidden");
+        if (els.aiModel) els.aiModel.setAttribute("aria-expanded", "false");
+    }
+
+    function resetModelList() {
+        state.modelOptions = [];
+        state.modelFetchKey = "";
+        state.modelFetchError = "";
+        state.modelFetchInFlight = false;
+        state.modelFetchId += 1;
+        closeModelList();
+    }
+
+    function selectModel(model) {
+        if (!els.aiModel) return;
+        els.aiModel.value = model;
+        closeModelList();
+        els.aiModel.focus();
+    }
+
+    function renderModelList() {
+        const list = els.aiModelList;
+        if (!list || list.classList.contains("hidden")) return;
+        const query = els.aiModel.value.trim().toLowerCase();
+        let html = "";
+        if (state.modelFetchInFlight) {
+            html = '<div class="combobox-empty">Загружаем список моделей…</div>';
+        } else if (state.modelFetchError) {
+            html = `<div class="combobox-empty">${escapeHtml(state.modelFetchError)}</div>`;
+        } else if (!state.modelOptions.length) {
+            html = '<div class="combobox-empty">Список моделей пуст</div>';
+        } else {
+            const options = state.modelOptions.filter((model) => !query || model.toLowerCase().includes(query));
+            if (!options.length) {
+                html = '<div class="combobox-empty">Ничего не найдено</div>';
+            } else {
+                html = options
+                    .map(
+                        (model) =>
+                            `<div class="combobox-option${model.toLowerCase() === query ? " sel" : ""}" data-model="${escapeHtml(model)}">${escapeHtml(model)}</div>`,
+                    )
+                    .join("");
+            }
+        }
+        list.innerHTML = html;
+    }
+
+    function openModelList() {
+        if (!els.aiModelList) return;
+        els.aiModelList.classList.remove("hidden");
+        els.aiModel.setAttribute("aria-expanded", "true");
+        renderModelList();
+    }
+
+    async function fetchModels(force = false) {
+        if (!els.aiBaseUrl || !els.aiModel || !els.aiModelList) return;
+        const baseUrl = els.aiBaseUrl.value.trim();
+        const key = baseUrl.replace(/\/+$/, "");
+        if (!baseUrl) {
+            state.modelOptions = [];
+            state.modelFetchKey = "";
+            state.modelFetchError = "Сначала укажите Base URL";
+            state.modelFetchInFlight = false;
+            state.modelFetchId += 1;
+            openModelList();
+            return;
+        }
+        if (state.modelFetchInFlight && state.modelFetchKey === key) {
+            openModelList();
+            return;
+        }
+        if (!force && state.modelFetchKey === key && state.modelOptions.length) {
+            openModelList();
+            return;
+        }
+        const requestId = ++state.modelFetchId;
+        state.modelFetchKey = key;
+        state.modelFetchError = "";
+        state.modelOptions = [];
+        state.modelFetchInFlight = true;
+        openModelList();
+        try {
+            const res = await fetch(`/api/llm/models?base_url=${encodeURIComponent(baseUrl)}`);
+            const data = await res.json().catch(() => ({}));
+            if (requestId !== state.modelFetchId) return;
+            if (!res.ok) {
+                throw new Error(apiErrorMessage(data?.detail, "Не удалось загрузить список моделей"));
+            }
+            if (els.aiBaseUrl.value.trim().replace(/\/+$/, "") !== key) return;
+            state.modelOptions = Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [];
+        } catch (err) {
+            if (requestId === state.modelFetchId && els.aiBaseUrl.value.trim().replace(/\/+$/, "") === key) {
+                state.modelFetchError = err.message || "Не удалось загрузить список моделей";
+            }
+        } finally {
+            if (requestId === state.modelFetchId) {
+                state.modelFetchInFlight = false;
+                renderModelList();
+            }
+        }
     }
 
     function cronFromUI() {
@@ -440,6 +551,7 @@ document.addEventListener("DOMContentLoaded", () => {
             els.aiBaseUrl.value = data.llm?.base_url || "";
             els.aiModel.value = data.llm?.model || "";
             els.aiPrompt.value = data.llm?.prompt || "";
+            resetModelList();
 
             state.selected = 0;
             state.query = "";
@@ -699,6 +811,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
     els.saveSettingsBtn.addEventListener("click", saveConfig);
 
+    if (els.aiBaseUrl) {
+        els.aiBaseUrl.addEventListener("input", resetModelList);
+    }
+
+    if (els.aiModel) {
+        els.aiModel.addEventListener("focus", () => fetchModels(false));
+        els.aiModel.addEventListener("input", () => {
+            if (!els.aiModelList.classList.contains("hidden")) renderModelList();
+        });
+        els.aiModel.addEventListener("blur", () => {
+            setTimeout(closeModelList, 120);
+        });
+    }
+
+    if (els.aiModelList) {
+        els.aiModelList.addEventListener("mousedown", (e) => {
+            const option = e.target.closest("[data-model]");
+            if (!option) return;
+            e.preventDefault();
+            selectModel(option.dataset.model);
+        });
+    }
+
+    document.addEventListener("click", (e) => {
+        if (els.aiModelCombobox && !e.target.closest(".combobox")) closeModelList();
+    });
+
     els.interval.addEventListener("change", () => {
         if (els.interval.value === "custom") {
             els.cronCustomRow.classList.remove("hidden");
@@ -843,9 +982,11 @@ document.addEventListener("DOMContentLoaded", () => {
             els.aiModal.classList.remove("hidden");
             els.aiModal.setAttribute("aria-hidden", "false");
         }
+        closeModelList();
     }
 
     function closeAi() {
+        closeModelList();
         if (els.aiModal) {
             els.aiModal.classList.add("hidden");
             els.aiModal.setAttribute("aria-hidden", "true");
@@ -873,6 +1014,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && els.aiModelList && !els.aiModelList.classList.contains("hidden")) {
+            closeModelList();
+            return;
+        }
         if (e.key === "Escape") {
             closeLogs();
             closeAi();

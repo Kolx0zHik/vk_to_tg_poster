@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import tempfile
 import types
@@ -218,6 +219,73 @@ class WebConfigTests(unittest.TestCase):
             self.assertEqual(data["general"]["cache_file"], "data/cache.json")
             self.assertEqual(data["general"]["log_file"], "data/logs/poster.log")
             self.assertEqual(data["communities"], [])
+
+
+class LLMModelsTests(unittest.TestCase):
+    class Response:
+        def __init__(self, status_code: int, data: dict, ok: bool = True) -> None:
+            self.status_code = status_code
+            self.data = data
+            self.ok = ok
+
+        def json(self) -> dict:
+            return self.data
+
+
+    def test_llm_models_requires_api_key(self) -> None:
+        with patch.object(web, "load_env_file"), patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(web.HTTPException) as ctx:
+                asyncio.run(web.llm_models())
+
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertIn("LLM_API_KEY", ctx.exception.detail["message"])
+
+    def test_llm_models_fetches_and_deduplicates_models(self) -> None:
+        calls = {}
+
+        def fake_get(url: str, headers: dict, timeout: int) -> LLMModelsTests.Response:
+            calls["url"] = url
+            calls["headers"] = headers
+            calls["timeout"] = timeout
+            return LLMModelsTests.Response(
+                200,
+                {"data": [{"id": "model-b"}, {"id": "model-a"}, {"id": "model-b"}]},
+            )
+
+        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://configured.example/v1"))
+        with patch.object(web, "load_env_file"), patch.object(web, "load_config", return_value=cfg), patch.dict(
+            os.environ, {"LLM_API_KEY": "sk-test"}
+        ), patch.object(web.requests, "get", side_effect=fake_get):
+            result = asyncio.run(web.llm_models(base_url="https://provider.example/v1/"))
+
+        self.assertEqual(result["models"], ["model-a", "model-b"])
+        self.assertEqual(calls["url"], "https://provider.example/v1/models")
+        self.assertEqual(calls["headers"]["Authorization"], "Bearer sk-test")
+        self.assertEqual(calls["timeout"], web.LLM_MODELS_TIMEOUT)
+
+    def test_llm_models_uses_configured_base_url_when_query_is_empty(self) -> None:
+        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://configured.example/v1/"))
+
+        def fake_get(url: str, headers: dict, timeout: int) -> LLMModelsTests.Response:
+            return LLMModelsTests.Response(200, {"data": [{"id": "model-a"}]})
+
+        with patch.object(web, "load_env_file"), patch.object(web, "load_config", return_value=cfg), patch.dict(
+            os.environ, {"LLM_API_KEY": "sk-test"}
+        ), patch.object(web.requests, "get", side_effect=fake_get):
+            result = asyncio.run(web.llm_models())
+
+        self.assertEqual(result["base_url"], "https://configured.example/v1")
+
+    def test_llm_models_rejects_provider_auth_error(self) -> None:
+        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://provider.example/v1"))
+
+        with patch.object(web, "load_env_file"), patch.object(web, "load_config", return_value=cfg), patch.dict(
+            os.environ, {"LLM_API_KEY": "sk-test"}
+        ), patch.object(web.requests, "get", return_value=LLMModelsTests.Response(401, {}, ok=False)):
+            with self.assertRaises(web.HTTPException) as ctx:
+                asyncio.run(web.llm_models())
+
+        self.assertEqual(ctx.exception.status_code, 401)
 
 
 class VersionTests(unittest.TestCase):

@@ -274,6 +274,54 @@ textarea {
     position: relative;
 }
 
+/* Combobox (searchable select) for the LLM model field */
+.combobox {
+    position: relative;
+}
+
+.combobox .combobox-list {
+    position: absolute;
+    z-index: 1200;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    background-color: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-md);
+}
+
+.combobox .combobox-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.45rem 0.7rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid #f1f5f9;
+    min-width: 0;
+}
+
+.combobox .combobox-option:last-child {
+    border-bottom: none;
+}
+
+.combobox .combobox-option:hover,
+.combobox .combobox-option.sel {
+    background-color: #eff6ff;
+}
+
+.combobox .combobox-empty {
+    padding: 0.55rem 0.7rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
 
 /* Switches */
 .switch-group {
