@@ -675,7 +675,8 @@ class PipelineDedupTests(unittest.TestCase):
 
             lines = [call.args[0] % call.args[1:] for call in info.call_args_list]
             dup_line = next(line for line in lines if "дубль, пропущен" in line)
-            self.assertIn("пост 1 из -123", dup_line)
+            self.assertIn("пост 1 из «Club»", dup_line)
+            self.assertNotIn("из -123", dup_line)
             self.assertIn("Тот же инфоповод", dup_line)
             self.assertEqual(tg.sent_posts, [])
 

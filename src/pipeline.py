@@ -181,12 +181,40 @@ def _candidate_pool(cache: Cache, window_days: int, limit: int = 20) -> tuple[Li
     return items, candidates
 
 
+def _community_names(config: Config, cache: Cache) -> dict:
+    """Map owner id → display name for readable references in logs and the journal.
+
+    Ids are resolved with the local parser first and the cached owner ids second,
+    so no VK call is made. Communities whose id cannot be resolved numerically are
+    simply absent from the map, and callers fall back to the raw owner id.
+    """
+    names: dict = {}
+    for community in config.communities:
+        owner_id = parse_owner_id(community.id)
+        if owner_id is None:
+            key = normalize_community_key(community.id)
+            if key:
+                owner_id = cache.get_owner_id(key)
+        if owner_id is None:
+            continue
+        names.setdefault(owner_id, (community.name or "").strip() or community.id)
+    return names
+
+
+def _candidate_label(matched: dict, names: dict) -> str:
+    """Human-readable source of a matched candidate: name, or the raw owner id."""
+    owner_id = matched.get("owner_id")
+    name = names.get(owner_id) if owner_id is not None else None
+    return f"«{name}»" if name else str(owner_id)
+
+
 def _dedup_check(
     post: Post,
     cache: Cache,
     dedup: SemanticDedup,
     window_days: int,
     debug_log: bool = False,
+    names: dict | None = None,
 ) -> tuple[bool, str]:
     """Return (is_duplicate, reason) for a post against the candidate pool.
 
@@ -220,7 +248,7 @@ def _dedup_check(
         idx = result.matched_index
         if 1 <= idx <= len(pool_items):
             matched = pool_items[idx - 1]
-            suffix = f"кандидат {idx} (пост {matched['post_id']} из {matched['owner_id']})"
+            suffix = f"кандидат {idx} (пост {matched['post_id']} из {_candidate_label(matched, names or {})})"
             reason = f"{reason}; {suffix}" if reason else suffix
     if debug_log and not result.is_duplicate:
         logger.info(
@@ -241,6 +269,7 @@ def _publish_pending(
     max_per_poll: int,
     stats: dict,
     dedup: SemanticDedup | None = None,
+    names: dict | None = None,
 ) -> None:
     for key, post in cache.pending_posts(owner_id, limit=max_per_poll):
         events = stats.setdefault("events", [])
@@ -256,7 +285,7 @@ def _publish_pending(
             continue
         window_days = general.semantic_dedup.window_days
         if general.semantic_dedup.enabled and dedup is not None and _post_text(post).strip():
-            is_dup, reason = _dedup_check(post, cache, dedup, window_days, debug_log=general.semantic_dedup.debug_log)
+            is_dup, reason = _dedup_check(post, cache, dedup, window_days, debug_log=general.semantic_dedup.debug_log, names=names)
             if is_dup:
                 cache.mark_skipped(key)
                 stats["dedup_skipped"] += 1
@@ -391,6 +420,9 @@ def process_communities(
     dedup_enabled = config.general.semantic_dedup.enabled and bool(config.llm.prompt.strip())
     if config.general.semantic_dedup.enabled and not dedup_enabled:
         logger.warning("ИИ-проверка включена, но системный промпт (llm.prompt) не задан — проверка пропущена")
+    # The candidate pool is global (ADR-018), so a matched post can come from any
+    # community — resolve names once for readable "duplicate of" references.
+    names = _community_names(config, cache) if dedup_enabled else {}
     summaries: List[dict] = []
     for community in config.communities:
         summary = _new_summary(community)
@@ -456,6 +488,7 @@ def process_communities(
             max_per_poll,
             stats,
             dedup=dedup,
+            names=names,
         )
 
         pending_left = len(cache.pending_posts(owner_id))
