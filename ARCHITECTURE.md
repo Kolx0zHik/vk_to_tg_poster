@@ -1,6 +1,6 @@
 # Архитектура
 
-Документ описывает, как сервис устроен сейчас (версия 1.1.15, ветка `feature/semantic-dedup`). Принятые решения и их причины — в
+Документ описывает, как сервис устроен сейчас (версия 1.1.16, ветка `main`). Принятые решения и их причины — в
 [DECISIONS.md](./DECISIONS.md); текущее состояние и известные проблемы — в [STATE.md](./STATE.md).
 
 ## 1. Общая схема
@@ -28,13 +28,14 @@
 
 | Модуль | Ответственность | Ключевые сущности |
 |---|---|---|
-| `src/main.py` | запуск, режимы `once`/`scheduled`, цикл по cron | `run_job`, `run_with_scheduler`, `main` |
-| `src/pipeline.py` | рабочий процесс публикации | `process_communities`, `_resolve_owner_id`, `_fetch_recent`, `_record_fetched`, `_publish_pending`, `_apply_backfill`, `_dedup_check` |
+| `src/main.py` | запуск, режимы `once`/`scheduled`, цикл по cron | `run_job`, `run_with_scheduler`, `_execute_run` (публикация + запись журнала), `main` |
+| `src/pipeline.py` | рабочий процесс публикации | `process_communities` (возвращает сводки по сообществам), `_resolve_owner_id`, `_fetch_recent`, `_record_fetched`, `_publish_pending`, `_apply_backfill`, `_dedup_check`, `_new_summary`, `_event` |
 | `src/vk_client.py` | VK API: посты, разбор вложений, разрешение screen name | `VKClient.fetch_posts`, `resolve_screen_name`, троттлинг `VK_REQUEST_INTERVAL=0.34`, ретраи `VK_MAX_RETRIES=2` |
 | `src/tg_client.py` | доставка в Telegram | `TelegramClient.send_post` и `send_text/photo/video/audio/media_group/link` |
 | `src/cache.py` | состояние публикаций (JSON, schema v2) | `Cache.record_post`, `pending_posts`, `mark_published/skipped/failed`, `published_candidates`, `prune_published_text`, `set_baseline`, `get/set_owner_id` |
 | `src/dedup.py` | семантическая проверка дублей через LLM | `SemanticDedup.check`, `DedupResult`, `DedupError` (OpenAI-совместимый `/chat/completions`) |
 | `src/backfill.py` | заявки на дозаливку и возобновление | `BackfillRequests`, `compute_baseline`, `requests_path_for` |
+| `src/journal.py` | структурный журнал запусков для панели (владеет планировщик, читает веб) | `RunJournal`, `journal_path_for`, `redact_tree`, `MAX_RUNS`, `MAX_EVENTS_PER_COMMUNITY` |
 | `src/config.py` | схема и (де)сериализация YAML | `load_config`, `parse_config_dict`, `config_to_dict`, `save_config_dict`, `ConfigError`, `SemanticDedupSettings`, `LLMSettings` |
 | `src/envfile.py` | загрузка секретов из `.env` рядом с конфигом | `load_env_file`, `env_file_path`, `IGNORED_KEYS` (TZ/LLM_DEBUG_LOG игнорируются) |
 | `src/web.py` | веб-панель и API | эндпоинты ниже, `_load_ui_config`, `_fetch_vk_info`, `_normalize_owner_id` |
@@ -54,7 +55,7 @@
 5. `_record_fetched` — посты в порядке «старые → новые» пишутся в кэш: `new` / `known` / `baseline` (пропущен как уже пройденный).
 6. `_publish_pending` — публикация не более `posts_limit` постов за цикл, старые первыми; заблокированные словами и запрещёнными типами помечаются `skipped`; ошибки → `pending` с повтором, после `PENDING_MAX_ATTEMPTS=5` → `dead`.
    - при включённой семантической проверке (`general.semantic_dedup.enabled`) и заданном системном промпте (`llm.prompt`) каждый пост с непустым текстом сравнивается с пулом опубликованных постов за окно (`cache.published_candidates`). User-message строит код (`_build_user_prompt`, см. ADR-021): новый пост и пронумерованный список кандидатов `{date, text}` в пределах `CANDIDATES_CHAR_BUDGET`, где кандидаты ограничиваются по границам целых записей, а не сырым обрезанием JSON. Системный промпт берётся только из `llm.prompt` и содержит одни критерии дубля — контракт ответа (`{"is_duplicate", "reason", "matched"}`) задаёт код. `matched` — номер кандидата (1-based), пайплайн маппит его обратно на исходный пост для лога. Встроенного промпта по умолчанию нет: пустой `llm.prompt` полностью отключает проверку (с предупреждением в лог), посты публикуются как обычно. Вердикт «дубль» → `skipped` и счётчик `dedup_skipped`. Любая ошибка LLM — fail-open: пост публикуется как обычно.
-7. Итоговая строка `info`: `fetched/new/published/known/blocked/skipped_by_type/dedup_skipped/failed/pending/backfill`.
+7. Итоговая строка `info` человеческим языком: `получено/новых/опубликовано/уже было/пропущено (по словам, по типу, дубли)/ошибок/в очереди`. `process_communities` возвращает по каждому сообществу сводку (`_new_summary`: `status: ok|paused|error`, те же счётчики, `events` — события по постам), `src.main` пишет её в журнал (`§5`).
 
 Инварианты (не ломать):
 
@@ -135,6 +136,32 @@
 `mode=none` — «только новые»: baseline ставится на самый свежий пост. Заявки старше 30 дней вычищаются.
 Путь вычисляется как «рядом с `cache_file`» (`requests_path_for`) — так веб никогда не пишет `cache.json`.
 
+### `runs.json` (принадлежит планировщику, веб читает)
+
+```json
+{
+  "meta": { "version": 1 },
+  "runs": [
+    { "started": 1757000000, "finished": 1757000012, "duration": 12.4, "ok": true,
+      "version": "1.1.16",
+      "communities": [
+        { "id": "-123", "name": "Клуб", "status": "ok|paused|error", "error": null,
+          "owner_id": -123, "fetched": 10, "new": 3, "published": 2, "known": 4,
+          "blocked": 0, "skipped_by_type": 1, "dedup_skipped": 0, "failed": 0,
+          "pending": 0, "backfill": 0,
+          "events": [{ "kind": "published|duplicate|blocked|skipped_type|failed|backfill|backfill_failed",
+                       "post_id": 456, "link": "https://vk.com/wall-123_456",
+                       "reason": "…", "text": "превью ≤160 симв." }] }
+      ] }
+  ]
+}
+```
+
+- newest-first, cap `MAX_RUNS=50` запусков и `MAX_EVENTS_PER_COMMUNITY=30` событий;
+- записывает `src.main` (`_execute_run` → `RunJournal.record`), читает `GET /api/journal`;
+- пути и строки проходят `redact_secrets` при записи; запись атомарная (`.tmp` + `os.replace`);
+- журнал производный: удаление файла ничего не ломает, следующий запуск создаст его заново.
+
 ### `avatars.json` (принадлежит вебу)
 
 `{ "<key>": { "name": "...", "photo": "https://...", "fetched_at": 1757000000 } }`, где `key = normalize_display_id(value).lower()`.
@@ -197,7 +224,8 @@ communities:
 | GET | `/api/community_info?value=` | имя/аватар сообщества | `{id, name, photo}`; нужен VK-токен, кэш 24 ч, при сбое — `{id: value, name: "", photo: null}` |
 | GET | `/api/llm/models?base_url=` | список моделей OpenAI-совместимого провайдера | `{models: [...], base_url: ...}`; сервер берёт `LLM_API_KEY` из `.env` и запрашивает `{base_url}/models` только у хоста, сохранённого в `llm.base_url` (см. ADR-024): пустой параметр → сохранённый URL, несовпадающий → 400 «сначала сохраните Base URL», нужны ключ и http(s) |
 | POST | `/api/backfill` | заявка на дозаливку | `{id, mode: none|posts|days, value}`; `posts` ≤ 100, `days` ≤ 365 |
-| GET | `/api/logs?lines=N` | хвост лога | `{lines: [...], path: "..."}` с замаскированными секретами; `N` по умолчанию 200, путь — `general.log_file` (fallback `data/logs/poster.log`) |
+| GET | `/api/logs?lines=N&level=&q=` | хвост лога | `{lines: [...], entries: [{ts, level, message}], path: "..."}` с замаскированными секретами; `lines` по умолчанию 200 — сырые строки (обратно совместимо), `entries` — разобранные, `level` — минимальный уровень (INFO/WARNING/ERROR), `q` — подстрока в сообщении; путь — `general.log_file` (fallback `data/logs/poster.log`) |
+| GET | `/api/journal?runs=N` | журнал запусков | `{runs: [...], path: "..."}` из `data/runs.json` (см. §5), newest-first, `N` по умолчанию 10 (максимум 50), строки повторно маскируются; пишет только планировщик |
 
 Валидация — Pydantic-модели (`GeneralModel`, `SemanticDedupModel`, `LLMModel`, `CommunityModel`, `SaveRequest`, `BackfillModel`), они должны
 оставаться синхронными с dataclass-схемой `src/config.py`.
@@ -206,7 +234,13 @@ communities:
 
 Одна страница, ванильный JS, состояние в объекте `state`:
 
-- шапка: кнопки «ИИ-проверка» и «Логи» — обе открывают модальные окна; модалки «Токены» больше нет;
+- шапка: кнопки «ИИ-проверка» и «Логи» — обе открывают модальные окна; модалки «Токены» больше нет; там же
+  чип статуса последнего запуска (берётся из `GET /api/journal?runs=1`: «Всё в порядке» / «Ошибок
+  публикации: N» / «Сбой запуска» + относительное время), клик открывает модалку на вкладке журнала;
+- модалка «Логи» («Журнал и логи») — две вкладки: «Журнал запусков» (карточки запусков с бейджем итога,
+  чипами счётчиков по сообществам и раскрываемыми событиями постов со ссылкой на VK) и «Технический лог»
+  (бейджи уровней, фильтр Все/Инфо/Важно/Ошибки, поиск, тумблер автообновления раз в 5 с); журнал —
+  вкладка по умолчанию;
 - «ИИ-проверка» — тумблер включения, `base_url`, `model`, окно сравнения (`window_days`), тумблер подробного
   лога (`debug_log`) и системный промпт (`prompt`, обязателен при включённой проверке: без него проверка не
   работает); подсказка, что ключ `LLM_API_KEY` задаётся в `.env`; поле модели — комбобокс: по фокусу загружает
@@ -244,6 +278,10 @@ Dockerfile многоступенчатый: зависимости ставят
 
 - Веб не должен писать `cache.json`: планировщик перезаписывает его постоянно, любая запись «извне»
   может откатить прогресс и привести к повторной публикации. Только `backfill.json`.
+- `data/runs.json` принадлежит планировщику так же, как `cache.json`: пишет `src.main`, читает `src.web`
+  (`GET /api/journal`). Файл производный — его удаление безопасно, журнал продолжит расти со следующего
+  запуска. Превью постов и тексты ошибок в нём маскируются при записи, но содержимое постов всё равно
+  попадает в файл: при доступности панели извне (баг No10) журнал отдаёт его так же, как `/api/logs`.
 - `record_post` дедуплицирует **глобально**: один и тот же пост из двух сообществ будет опубликован
   один раз (второе увидит его как `known`).
 - Удаление сообщества не чистит `posts`/`communities` в кэше; повторное добавление продолжит с

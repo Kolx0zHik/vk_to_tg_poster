@@ -7,6 +7,7 @@ from .backfill import MAX_BACKFILL_POSTS, BackfillRequests, compute_baseline, no
 from .cache import Cache
 from .config import Config, ContentTypes
 from .dedup import DedupError, SemanticDedup
+from .journal import MAX_EVENTS_PER_COMMUNITY
 from .models import Post
 from .tg_client import TelegramClient
 from .vk_client import VKClient
@@ -17,6 +18,60 @@ logger = logging.getLogger("poster.pipeline")
 
 MAX_FETCH_PAGES = 5
 BACKFILL_PAGE_SIZE = 100
+EVENT_TEXT_MAX = 160
+
+
+def _new_summary(community) -> dict:
+    """Per-community record handed to the run journal and the web panel."""
+    return {
+        "id": community.id,
+        "name": community.name,
+        "status": "ok",
+        "error": None,
+        "owner_id": None,
+        "fetched": 0,
+        "new": 0,
+        "published": 0,
+        "known": 0,
+        "blocked": 0,
+        "skipped_by_type": 0,
+        "dedup_skipped": 0,
+        "failed": 0,
+        "pending": 0,
+        "backfill": 0,
+        "events": [],
+    }
+
+
+def _event(kind: str, post: Post | None = None, reason: str = "", text: str = "") -> dict:
+    item: dict = {"kind": kind}
+    if post is not None:
+        item["post_id"] = post.id
+        item["link"] = post.vk_link
+    if reason:
+        item["reason"] = reason
+    if text:
+        item["text"] = text[:EVENT_TEXT_MAX]
+    return item
+
+
+def _summary_from_stats(summary: dict, stats: dict, pending_left: int) -> dict:
+    for key in (
+        "fetched",
+        "new",
+        "published",
+        "known",
+        "blocked",
+        "skipped_by_type",
+        "dedup_skipped",
+        "failed",
+        "backfill",
+    ):
+        summary[key] = stats[key]
+    summary["pending"] = pending_left
+    summary["events"] = stats.get("events", [])[:MAX_EVENTS_PER_COMMUNITY]
+    summary["status"] = "error" if stats.get("failed") else "ok"
+    return summary
 
 
 def _should_publish(post: Post, allowed: ContentTypes) -> bool:
@@ -188,13 +243,16 @@ def _publish_pending(
     dedup: SemanticDedup | None = None,
 ) -> None:
     for key, post in cache.pending_posts(owner_id, limit=max_per_poll):
+        events = stats.setdefault("events", [])
         if _contains_blocked(post, general.blocked_keywords):
             cache.mark_skipped(key)
             stats["blocked"] += 1
+            events.append(_event("blocked", post, text=_post_text(post)))
             continue
         if not _should_publish(post, community.content_types):
             cache.mark_skipped(key)
             stats["skipped_by_type"] += 1
+            events.append(_event("skipped_type", post, text=_post_text(post)))
             continue
         window_days = general.semantic_dedup.window_days
         if general.semantic_dedup.enabled and dedup is not None and _post_text(post).strip():
@@ -202,6 +260,7 @@ def _publish_pending(
             if is_dup:
                 cache.mark_skipped(key)
                 stats["dedup_skipped"] += 1
+                events.append(_event("duplicate", post, reason=reason, text=_post_text(post)))
                 logger.info("Пост %s из %s — дубль, пропущен (%s)", post.id, community.name, reason)
                 continue
         try:
@@ -209,6 +268,7 @@ def _publish_pending(
         except Exception as exc:  # noqa: BLE001
             status = cache.mark_failed(key)
             stats["failed"] += 1
+            events.append(_event("failed", post, reason=str(exc), text=_post_text(post)))
             logger.error("Не удалось опубликовать пост %s из %s: %s", post.id, community.name, exc)
             if status == "dead":
                 logger.warning(
@@ -220,6 +280,7 @@ def _publish_pending(
         else:
             cache.mark_published(key)
             stats["published"] += 1
+            events.append(_event("published", post, text=_post_text(post)))
             logger.debug("Опубликован пост %s из %s", post.id, community.name)
 
 
@@ -292,6 +353,7 @@ def _apply_backfill(
     try:
         posts = _fetch_for_backfill(vk_client, owner_id, mode, value, now)
     except Exception as exc:  # noqa: BLE001
+        stats.setdefault("events", []).append({"kind": "backfill_failed", "reason": str(exc)})
         logger.error("Не удалось получить посты для дозаливки %s: %s", community.name, exc)
         return
 
@@ -299,6 +361,7 @@ def _apply_backfill(
     cache.set_baseline(owner_id, baseline[0], baseline[1])
     requests.pop(request_key)
     stats["backfill"] = len(posts)
+    stats.setdefault("events", []).append({"kind": "backfill", "mode": mode, "value": value, "count": len(posts)})
     logger.info(
         "Дозаливка %s: режим=%s значение=%s получено=%s база=(%s,%s)",
         community.name,
@@ -316,14 +379,21 @@ def process_communities(
     tg_client: TelegramClient,
     cache: Cache,
     backfill: BackfillRequests | None = None,
-) -> None:
+) -> List[dict]:
+    """Publish pending posts for every community.
+
+    Returns one summary per community (in config order) for the run journal and
+    the web panel: status, counters and notable post events.
+    """
     cache.prune_published_text(config.general.semantic_dedup.window_days)
     # No built-in prompt: without an explicit system prompt the LLM check is simply
     # not performed (the run continues as if semantic_dedup were disabled).
     dedup_enabled = config.general.semantic_dedup.enabled and bool(config.llm.prompt.strip())
     if config.general.semantic_dedup.enabled and not dedup_enabled:
         logger.warning("ИИ-проверка включена, но системный промпт (llm.prompt) не задан — проверка пропущена")
+    summaries: List[dict] = []
     for community in config.communities:
+        summary = _new_summary(community)
         stats = {
             "fetched": 0,
             "new": 0,
@@ -334,15 +404,22 @@ def process_communities(
             "dedup_skipped": 0,
             "failed": 0,
             "backfill": 0,
+            "events": [],
         }
         if not community.active:
+            summary["status"] = "paused"
             logger.info("Сообщество %s на паузе, пропускаем", community.name)
+            summaries.append(summary)
             continue
 
         owner_id = _resolve_owner_id(community.id, vk_client, cache)
         if owner_id is None:
+            summary["status"] = "error"
+            summary["error"] = "не удалось определить ID сообщества"
             logger.warning("Не удалось определить ID сообщества '%s', пропускаем", community.id)
+            summaries.append(summary)
             continue
+        summary["owner_id"] = owner_id
 
         _apply_backfill(community, owner_id, vk_client, cache, backfill, stats)
 
@@ -352,7 +429,10 @@ def process_communities(
         try:
             fetched = _fetch_recent(vk_client, cache, owner_id, page_size)
         except Exception as exc:  # noqa: BLE001
+            summary["status"] = "error"
+            summary["error"] = "не удалось получить посты из VK"
             logger.error("Не удалось получить посты для %s: %s", community.name, exc)
+            summaries.append(summary)
             continue
 
         stats["fetched"] = len(fetched)
@@ -379,18 +459,21 @@ def process_communities(
         )
 
         pending_left = len(cache.pending_posts(owner_id))
+        _summary_from_stats(summary, stats, pending_left)
+        summaries.append(summary)
         logger.info(
-            "Сообщество %s: fetched=%s new=%s published=%s known=%s blocked=%s "
-            "skipped_by_type=%s dedup_skipped=%s failed=%s pending=%s backfill=%s",
+            "Сообщество %s: получено %s, новых %s, опубликовано %s, уже было %s, "
+            "пропущено %s (по словам %s, по типу %s, дубли %s), ошибок %s, в очереди %s",
             community.name,
             stats["fetched"],
             stats["new"],
             stats["published"],
             stats["known"],
+            stats["blocked"] + stats["skipped_by_type"] + stats["dedup_skipped"],
             stats["blocked"],
             stats["skipped_by_type"],
             stats["dedup_skipped"],
             stats["failed"],
             pending_left,
-            stats["backfill"],
         )
+    return summaries

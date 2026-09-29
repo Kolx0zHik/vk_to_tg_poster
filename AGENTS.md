@@ -12,6 +12,7 @@ This repository is a small VK-to-Telegram reposting service.
 - `src.config` is the source of truth for config parsing/serialization.
 - `src.cache` stores deduplication state, per-community `baseline` and cached owner ids.
 - `src.backfill` holds backfill/resume requests written by the web UI and consumed by the scheduler.
+- `src.journal` stores the structured run journal (`data/runs.json`) written by the scheduler and read by the web UI.
 - `src.envfile` loads secrets from `.env` next to the config path.
 - `src.dedup` performs the optional LLM-based semantic duplicate check (OpenAI-compatible API).
 - `src.vk_ids` normalizes VK links and ids without network access.
@@ -120,6 +121,7 @@ Core flow:
 5. Optionally run the LLM semantic duplicate check (posts with text only)
 6. Publish to Telegram
 7. Update dedup cache (and the community `baseline` only when a backfill/pause request was applied)
+8. Record a structured run summary in `data/runs.json` (`src.journal`, written by `src.main` `_execute_run`)
 
 Important invariants:
 
@@ -152,10 +154,12 @@ An empty `llm.prompt` disables the check entirely (see above).
 | `data/.env` | humans | secrets only, next to `CONFIG_PATH`; loaded by `src/envfile.py` |
 | `data/cache.json` | **scheduler only** | schema v2; published posts keep a short `text` for the semantic pool |
 | `data/backfill.json` | web UI (written), scheduler (consumed) | path derived via `requests_path_for(cache_file)` |
+| `data/runs.json` | **scheduler only** | run journal for the panel (path via `journal_path_for(cache_file)`); capped (`MAX_RUNS=50`), redacted at write time; web only reads it via `GET /api/journal` |
 | `data/avatars.json` | web UI | 24h TTL cache of name/photo |
 
 Never write `cache.json` from the web process: the scheduler rewrites it continuously and an outside write
-can roll back progress and cause re-publishing.
+can roll back progress and cause re-publishing. The same rule applies to `data/runs.json` (write: scheduler,
+read: web UI).
 
 ### Telegram Behavior
 
@@ -183,6 +187,8 @@ can roll back progress and cause re-publishing.
 - can call VK APIs to resolve names and refresh avatars
 - persists avatar cache in `data/avatars.json`
 - writes backfill requests to `data/backfill.json`
+- serves the run journal (`GET /api/journal`) and the parsed log tail (`GET /api/logs`, `entries` with
+  `level`/`q` filters); it never writes `data/runs.json`
 
 UI conventions in `static/`:
 
@@ -191,6 +197,10 @@ UI conventions in `static/`:
 - Tokens are never edited in the UI: they live in `.env`. The header has an "ИИ-проверка" modal
   (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days/debug_log`) and the
   Telegram channel field sits in the main settings card (with the `general.timezone` field).
+- The header also shows a last-run status chip (`GET /api/journal?runs=1`) that opens the logs modal on the
+  journal tab. The "Логи" modal has two tabs: "Журнал запусков" (run cards from `/api/journal`: counters as
+  chips, expandable per-post events) and "Технический лог" (parsed `/api/logs` entries with level badges,
+  filter buttons, search, 5s auto-refresh toggle). Keep the journal tab default.
 - The groups panel is master-detail: left list (search + names), right settings (status segment, content
   type icon toggles). No checkboxes, no raw community ids anywhere, community name links to VK.
 - Adding a community happens in a modal (same style as the old tokens modal) with preset amount buttons and
@@ -236,7 +246,8 @@ Take extra care and verify changes when touching:
 - `src.vk_client`: attachment parsing and repost source extraction
 - `src.cache`: atomic persistence, statuses, migration from the legacy schema, stored semantic-pool text
 - `src.backfill`: baseline computation and request lifecycle
-- `src.web`: config validation, avatar refresh, and API-facing schema changes
+- `src.journal`: run journal format (contract with the web UI), size caps and redaction at write time
+- `src.web`: config validation, avatar refresh, backfill requests, and API-facing schema changes
 - `src.logger`: duplicate handlers, timezone behavior, log cleanup, and the compact file-log contract
 - `src.envfile`: `.env` loading order (explicit environment must win)
 - `src.dedup`: prompt/JSON parsing, fail-open behavior, and never leaking the API key
@@ -258,7 +269,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (138 on feature/semantic-dedup)
+python -m unittest discover -s tests          # unit tests (148)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main

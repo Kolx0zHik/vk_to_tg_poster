@@ -25,6 +25,7 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button id="runStatus" class="run-status hidden" type="button" title="Последний запуск"></button>
                 <button id="openAiBtn" class="btn btn-secondary">
                     <svg class="badge-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16"
                          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -319,15 +320,35 @@
         </div>
     </div>
 
-    <!-- Logs Modal -->
+    <!-- Journal & Logs Modal -->
     <div id="logsModal" class="modal hidden" aria-hidden="true">
         <div class="modal-card">
             <div class="modal-header">
-                <h3>Системные логи</h3>
+                <h3>Журнал и логи</h3>
             </div>
-            <div class="logs-container" id="logsContainer">
-                <!-- Logs will be inserted here -->
+            <div class="logs-tabs" role="tablist">
+                <button type="button" class="logs-tab active" data-logs-tab="journal" role="tab">Журнал запусков</button>
+                <button type="button" class="logs-tab" data-logs-tab="log" role="tab">Технический лог</button>
             </div>
+
+            <div class="logs-panel" id="journalPanel">
+                <div class="journal-list" id="journalContainer"></div>
+            </div>
+
+            <div class="logs-panel hidden" id="logPanel">
+                <div class="logs-toolbar">
+                    <div class="logs-filters" id="logLevelFilters">
+                        <button type="button" class="log-filter active" data-level="">Все</button>
+                        <button type="button" class="log-filter" data-level="INFO">Инфо</button>
+                        <button type="button" class="log-filter" data-level="WARNING">Важно</button>
+                        <button type="button" class="log-filter" data-level="ERROR">Ошибки</button>
+                    </div>
+                    <input id="logSearch" class="logs-search" type="search" placeholder="Поиск по логу">
+                    <label class="logs-auto"><input type="checkbox" id="logAutoRefresh"> Авто</label>
+                </div>
+                <div class="logs-container" id="logsContainer"></div>
+            </div>
+
             <div class="modal-footer">
                 <button id="refreshLogsBtn" class="btn btn-secondary">Обновить</button>
                 <button id="closeLogsBtn" class="btn btn-secondary">Закрыть</button>

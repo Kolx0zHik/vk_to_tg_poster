@@ -134,6 +134,7 @@ from src.config import (
     save_config_dict,
 )
 from src.logger import configure_logging, redact_secrets
+from src.journal import MAX_RUNS, RunJournal, journal_path_for, redact_tree
 from src.models import Attachment, Post
 from src.pipeline import _resolve_owner_id, process_communities
 from src.tg_client import (
@@ -1538,6 +1539,150 @@ class BackfillPipelineTests(unittest.TestCase):
 
             self.assertEqual(tg.sent_posts, [])
             self.assertIsNotNone(requests.get("-123"))
+
+
+class RunJournalTests(unittest.TestCase):
+    def test_journal_path_sits_next_to_cache(self) -> None:
+        self.assertEqual(str(journal_path_for("data/cache.json")), "data/runs.json")
+
+    def test_record_keeps_newest_first_and_redacts(self) -> None:
+        secret = "JOURNALSECRETTOKEN"
+        token = _fake_vk_token(secret)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runs.json"
+            journal = RunJournal(path)
+            journal.record({"ok": True, "error": f"boom access_token={token}&v=5.199"})
+            journal.record({"ok": False})
+
+            runs = journal.recent(limit=5)
+            self.assertFalse(runs[0]["ok"])
+            self.assertTrue(runs[1]["ok"])
+
+            stored = path.read_text(encoding="utf-8")
+            self.assertNotIn(secret, stored)
+            self.assertIn("<redacted>", stored)
+
+    def test_journal_is_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            journal = RunJournal(Path(tmpdir) / "runs.json")
+            for index in range(MAX_RUNS + 5):
+                journal.record({"started": index})
+
+            runs = journal.recent(limit=MAX_RUNS + 10)
+            self.assertEqual(len(runs), MAX_RUNS)
+            self.assertEqual(runs[0]["started"], MAX_RUNS + 4)
+
+    def test_redact_tree_walks_nested_structures(self) -> None:
+        token = _fake_vk_token("NESTEDSECRET")
+        result = redact_tree({"communities": [{"error": f"x?access_token={token}"}]})
+        self.assertNotIn("NESTEDSECRET", json.dumps(result))
+        self.assertIn("<redacted>", result["communities"][0]["error"])
+
+
+class LogParsingTests(unittest.TestCase):
+    def test_parse_log_lines_groups_continuations(self) -> None:
+        raw = [
+            "2026-09-14 16:11:34,741 [INFO] Версия проекта: 1.1.16\n",
+            "2026-09-14 16:11:35,000 [ERROR] Не удалось получить посты\n",
+            "    traceback line\n",
+            "2026-09-14 16:11:36,500 [WARNING] Токены не заданы\n",
+        ]
+
+        entries = web.parse_log_lines(raw)
+
+        self.assertEqual(len(entries), 3)
+        self.assertEqual(entries[0]["level"], "INFO")
+        self.assertEqual(entries[1]["message"], "Не удалось получить посты\n    traceback line")
+        self.assertEqual(entries[1]["ts"], "2026-09-14 16:11:35,000")
+
+    def test_filter_log_entries_by_level_and_query(self) -> None:
+        entries = web.parse_log_lines(
+            [
+                "2026-09-14 16:11:34,741 [INFO] Версия проекта: 1.1.16\n",
+                "2026-09-14 16:11:35,000 [ERROR] Не удалось получить посты\n",
+                "2026-09-14 16:11:36,500 [CRITICAL] Всё упало\n",
+            ]
+        )
+
+        self.assertEqual(
+            [entry["level"] for entry in web.filter_log_entries(entries, "ERROR", "")],
+            ["ERROR", "CRITICAL"],
+        )
+        self.assertEqual(len(web.filter_log_entries(entries, "", "версия")), 1)
+        self.assertEqual(len(web.filter_log_entries(entries, "DEBUG", "ошибка")), 0)
+
+    def test_api_journal_reads_next_to_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            RunJournal(journal_path_for(cache_path)).record({"ok": True, "communities": []})
+            cfg = Config(
+                general=GeneralSettings(cache_file=str(cache_path)),
+                vk=VKSettings(),
+                telegram=TelegramSettings(),
+                communities=[],
+            )
+
+            with patch.object(web, "load_config", return_value=cfg):
+                result = asyncio.run(web.get_journal(runs=5))
+
+            self.assertEqual(len(result["runs"]), 1)
+            self.assertTrue(result["runs"][0]["ok"])
+
+
+class PipelineSummaryTests(unittest.TestCase):
+    def _config(self, active: bool = True) -> Config:
+        return Config(
+            general=GeneralSettings(posts_limit=10),
+            vk=VKSettings(),
+            telegram=TelegramSettings(channel_id="@channel"),
+            communities=[Community(id="club123", name="Club", active=active)],
+        )
+
+    def test_summary_carries_counts_and_published_event(self) -> None:
+        posts = [Post(id=5, owner_id=-123, date=100, text="hello")]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summaries = process_communities(
+                self._config(),
+                PagedVKClient(posts),
+                FakeTGClient(),
+                Cache(str(Path(tmpdir) / "cache.json")),
+            )
+
+        self.assertEqual(len(summaries), 1)
+        summary = summaries[0]
+        self.assertEqual(summary["name"], "Club")
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(summary["published"], 1)
+        self.assertEqual(summary["events"][0]["kind"], "published")
+        self.assertEqual(summary["events"][0]["link"], "https://vk.com/wall-123_5")
+
+    def test_inactive_community_summary_is_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summaries = process_communities(
+                self._config(active=False),
+                PagedVKClient([]),
+                FakeTGClient(),
+                Cache(str(Path(tmpdir) / "cache.json")),
+            )
+
+        self.assertEqual(summaries[0]["status"], "paused")
+        self.assertEqual(summaries[0]["events"], [])
+
+    def test_failed_fetch_summary_reports_error(self) -> None:
+        class BrokenVKClient(PagedVKClient):
+            def fetch_posts(self, owner_id: int, count: int = 10, offset: int = 0) -> list[Post]:
+                raise RuntimeError("vk down")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summaries = process_communities(
+                self._config(),
+                BrokenVKClient([]),
+                FakeTGClient(),
+                Cache(str(Path(tmpdir) / "cache.json")),
+            )
+
+        self.assertEqual(summaries[0]["status"], "error")
+        self.assertTrue(summaries[0]["error"])
 
 
 if __name__ == "__main__":

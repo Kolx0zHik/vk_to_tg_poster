@@ -13,6 +13,11 @@ document.addEventListener("DOMContentLoaded", () => {
         modelFetchError: "",
         modelFetchInFlight: false,
         modelFetchId: 0,
+        logsTab: "journal",
+        logLevel: "",
+        logQuery: "",
+        logEntries: [],
+        logAutoTimer: null,
     };
 
     const els = {
@@ -60,6 +65,14 @@ document.addEventListener("DOMContentLoaded", () => {
         openLogsBtn: document.getElementById("openLogsBtn"),
         closeLogsBtn: document.getElementById("closeLogsBtn"),
         refreshLogsBtn: document.getElementById("refreshLogsBtn"),
+        journalContainer: document.getElementById("journalContainer"),
+        journalPanel: document.getElementById("journalPanel"),
+        logPanel: document.getElementById("logPanel"),
+        logsTabs: document.querySelectorAll("[data-logs-tab]"),
+        logLevelFilters: document.getElementById("logLevelFilters"),
+        logSearch: document.getElementById("logSearch"),
+        logAutoRefresh: document.getElementById("logAutoRefresh"),
+        runStatus: document.getElementById("runStatus"),
 
         projectVersion: document.getElementById("projectVersion"),
 
@@ -788,24 +801,234 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    const EVENT_META = {
+        published: { icon: "📤", label: "Опубликован", cls: "pub" },
+        duplicate: { icon: "🔁", label: "Дубль, пропущен", cls: "dup" },
+        blocked: { icon: "🚫", label: "Заблокировано словом", cls: "block" },
+        skipped_type: { icon: "⏭", label: "Пропущен по типу контента", cls: "skip" },
+        failed: { icon: "⚠", label: "Ошибка публикации", cls: "fail" },
+        backfill: { icon: "📚", label: "Дозаливка", cls: "back" },
+        backfill_failed: { icon: "⚠", label: "Дозаливка не удалась", cls: "fail" },
+    };
+
+    const LEVEL_META = {
+        DEBUG: { short: "отл", cls: "debug" },
+        INFO: { short: "инфо", cls: "info" },
+        WARNING: { short: "важно", cls: "warning" },
+        ERROR: { short: "ошибка", cls: "error" },
+        CRITICAL: { short: "крит", cls: "error" },
+    };
+
+    function formatRelativeTime(tsSeconds) {
+        const ts = Number(tsSeconds) || 0;
+        if (!ts) return "";
+        const diff = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (diff < 60) return "только что";
+        if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`;
+        return `${Math.floor(diff / 86400)} дн назад`;
+    }
+
+    function formatJournalTime(tsSeconds) {
+        const ts = Number(tsSeconds) || 0;
+        if (!ts) return "";
+        const d = new Date(ts * 1000);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function journalChip(cls, icon, count, title) {
+        if (!count) return "";
+        return `<span class="jc ${cls}" title="${escapeHtml(title)}">${icon} ${count}</span>`;
+    }
+
+    function renderJournalEvent(event) {
+        const meta = EVENT_META[event.kind] || { icon: "•", label: event.kind || "событие", cls: "" };
+        const link = event.link
+            ? `<a class="je-link" href="${escapeHtml(event.link)}" target="_blank" rel="noopener">пост ${event.post_id}</a>`
+            : (event.post_id ? `<span class="je-post">пост ${event.post_id}</span>` : "");
+        const detail = event.kind === "backfill"
+            ? `<span class="je-detail">режим «${escapeHtml(event.mode || "")}», ${event.count || 0}</span>`
+            : "";
+        const reason = event.reason ? `<span class="je-reason">${escapeHtml(event.reason)}</span>` : "";
+        const text = event.text ? `<span class="je-text">${escapeHtml(event.text)}</span>` : "";
+        return `<div class="journal-event je-${meta.cls}">
+            <span class="je-icon">${meta.icon}</span>
+            <span class="je-label">${escapeHtml(meta.label)}</span>
+            ${link}${detail}${reason}${text}
+        </div>`;
+    }
+
+    function renderJournalCommunity(community) {
+        const skipped = (community.blocked || 0) + (community.skipped_by_type || 0) + (community.dedup_skipped || 0);
+        const chips = [
+            journalChip("fetch", "📥", community.fetched, "Получено из VK"),
+            journalChip("new", "✨", community.new, "Новых постов"),
+            journalChip("pub", "📤", community.published, "Опубликовано"),
+            journalChip("skip", "⏭", skipped, "Пропущено"),
+            journalChip("err", "⚠", community.failed, "Ошибок публикации"),
+            journalChip("queue", "🕓", community.pending, "Осталось в очереди"),
+        ].join("");
+        const stateChip = community.status === "paused"
+            ? '<span class="jc paused">пауза</span>'
+            : (chips || '<span class="jc muted">без изменений</span>');
+        const error = community.error ? `<div class="comm-error">${escapeHtml(community.error)}</div>` : "";
+        const events = (community.events || []).map(renderJournalEvent).join("");
+        return `<div class="comm-block">
+            <div class="comm-row">
+                <div class="comm-name">${escapeHtml(community.name || community.id || "Без названия")}</div>
+                <div class="comm-chips">${stateChip}</div>
+                ${events ? '<button type="button" class="comm-toggle" data-toggle-events>Подробнее</button>' : ""}
+            </div>
+            ${error}
+            ${events ? `<div class="comm-events hidden">${events}</div>` : ""}
+        </div>`;
+    }
+
+    function renderJournal(runs) {
+        if (!els.journalContainer) return;
+        if (!runs || !runs.length) {
+            els.journalContainer.innerHTML =
+                '<div class="journal-empty">Запусков ещё не было. Журнал появится после первого запуска публикации.</div>';
+            return;
+        }
+        els.journalContainer.innerHTML = runs.map((run) => {
+            const ok = run.ok !== false && !run.error;
+            const statusLabel = run.error ? "Сбой" : (ok ? "Успешно" : "С ошибками");
+            const when = formatJournalTime(run.finished || run.started);
+            const rel = formatRelativeTime(run.finished || run.started);
+            const duration = run.duration != null ? `${run.duration} с` : "";
+            const communities = (run.communities || []).map(renderJournalCommunity).join("");
+            const runError = run.error ? `<div class="run-error">${escapeHtml(run.error)}</div>` : "";
+            const empty = !run.communities || !run.communities.length;
+            return `<div class="run-card ${ok ? "ok" : "err"}">
+                <div class="run-head">
+                    <span class="run-badge">${escapeHtml(statusLabel)}</span>
+                    <span class="run-when">${escapeHtml(when)} · ${escapeHtml(rel)}</span>
+                    <span class="run-meta">${escapeHtml(duration)}${run.version ? " · v" + escapeHtml(run.version) : ""}</span>
+                </div>
+                ${runError}
+                ${empty && !run.error ? '<div class="journal-empty">Сообществ нет.</div>' : communities}
+            </div>`;
+        }).join("");
+    }
+
+    async function loadJournal() {
+        try {
+            const res = await fetch("/api/journal?runs=10");
+            const data = await res.json();
+            renderJournal(data.runs || []);
+        } catch {
+            if (els.journalContainer) {
+                els.journalContainer.innerHTML = '<div class="journal-empty">Не удалось загрузить журнал.</div>';
+            }
+        }
+    }
+
+    function filterLogEntriesClient(entries) {
+        const order = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+        let result = entries || [];
+        if (state.logLevel && order.includes(state.logLevel)) {
+            const min = order.indexOf(state.logLevel);
+            result = result.filter((entry) => order.indexOf((entry.level || "").toUpperCase()) >= min);
+        }
+        const query = (state.logQuery || "").trim().toLowerCase();
+        if (query) {
+            result = result.filter((entry) => String(entry.message || "").toLowerCase().includes(query));
+        }
+        return result;
+    }
+
+    function renderLogEntries() {
+        if (!els.logsContainer) return;
+        const entries = filterLogEntriesClient(state.logEntries);
+        if (!entries.length) {
+            els.logsContainer.innerHTML = '<div class="log-empty">Записей нет</div>';
+            return;
+        }
+        els.logsContainer.innerHTML = entries.map((entry) => {
+            const level = (entry.level || "").toUpperCase();
+            const meta = LEVEL_META[level];
+            const badge = meta ? `<span class="log-level log-${meta.cls}">${meta.short}</span>` : "";
+            const time = entry.ts ? entry.ts.slice(11, 19) : "";
+            return `<div class="log-entry">
+                <span class="log-time">${escapeHtml(time)}</span>
+                ${badge}
+                <span class="log-message">${escapeHtml(entry.message || "")}</span>
+            </div>`;
+        }).join("");
+    }
+
     async function loadLogs() {
         try {
-            const res = await fetch("/api/logs?lines=50");
+            const res = await fetch("/api/logs?lines=500");
             const data = await res.json();
-            els.logsContainer.innerHTML = "";
-            const lines = data.lines || [];
-            if (!lines.length) {
-                els.logsContainer.innerHTML = '<div class="log-entry"><span class="log-message">Логи пусты</span></div>';
-                return;
-            }
-            lines.forEach((line) => {
-                els.logsContainer.insertAdjacentHTML(
-                    "beforeend",
-                    `<div class="log-entry"><span class="log-message">${line.replace(/</g, "&lt;")}</span></div>`,
-                );
-            });
+            state.logEntries = data.entries || [];
+            renderLogEntries();
         } catch {
             showToast("Не удалось загрузить логи", true);
+        }
+    }
+
+    function setLogsTab(tab) {
+        state.logsTab = tab === "log" ? "log" : "journal";
+        if (els.journalPanel) els.journalPanel.classList.toggle("hidden", state.logsTab !== "journal");
+        if (els.logPanel) els.logPanel.classList.toggle("hidden", state.logsTab !== "log");
+        els.logsTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.logsTab === state.logsTab));
+        if (state.logsTab === "log") {
+            loadLogs();
+        } else {
+            loadJournal();
+        }
+        syncLogAutoRefresh();
+    }
+
+    function stopLogAutoRefresh() {
+        if (state.logAutoTimer) {
+            clearInterval(state.logAutoTimer);
+            state.logAutoTimer = null;
+        }
+    }
+
+    function syncLogAutoRefresh() {
+        stopLogAutoRefresh();
+        if (els.logAutoRefresh && els.logAutoRefresh.checked && state.logsTab === "log") {
+            state.logAutoTimer = setInterval(loadLogs, 5000);
+        }
+    }
+
+    function renderRunStatus(runs) {
+        if (!els.runStatus) return;
+        const run = runs && runs[0];
+        if (!run) {
+            els.runStatus.classList.add("hidden");
+            return;
+        }
+        const communities = run.communities || [];
+        const failedCommunities = communities.filter((item) => item.status === "error").length;
+        const failedPosts = communities.reduce((sum, item) => sum + (item.failed || 0), 0);
+        const ok = run.ok !== false && !run.error;
+        let label = "Всё в порядке";
+        if (run.error) {
+            label = "Сбой запуска";
+        } else if (failedCommunities) {
+            label = `Ошибки: ${failedCommunities}`;
+        } else if (failedPosts) {
+            label = `Ошибок публикации: ${failedPosts}`;
+        }
+        els.runStatus.className = "run-status " + (ok ? "ok" : "err");
+        els.runStatus.innerHTML =
+            `<span class="run-status-dot"></span><span>${escapeHtml(label)}</span>` +
+            `<span class="run-status-when">${escapeHtml(formatRelativeTime(run.finished || run.started))}</span>`;
+    }
+
+    async function loadRunStatus() {
+        try {
+            const res = await fetch("/api/journal?runs=1");
+            const data = await res.json();
+            renderRunStatus(data.runs || []);
+        } catch {
+            if (els.runStatus) els.runStatus.classList.add("hidden");
         }
     }
 
@@ -967,10 +1190,11 @@ document.addEventListener("DOMContentLoaded", () => {
             els.logsModal.classList.remove("hidden");
             els.logsModal.setAttribute("aria-hidden", "false");
         }
-        loadLogs();
+        setLogsTab(state.logsTab || "journal");
     }
 
     function closeLogs() {
+        stopLogAutoRefresh();
         if (els.logsModal) {
             els.logsModal.classList.add("hidden");
             els.logsModal.setAttribute("aria-hidden", "true");
@@ -1035,7 +1259,59 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (els.refreshLogsBtn) {
-        els.refreshLogsBtn.addEventListener("click", () => loadLogs());
+        els.refreshLogsBtn.addEventListener("click", () => {
+            if (state.logsTab === "log") {
+                loadLogs();
+            } else {
+                loadJournal();
+            }
+        });
+    }
+
+    els.logsTabs.forEach((btn) => {
+        btn.addEventListener("click", () => setLogsTab(btn.dataset.logsTab));
+    });
+
+    if (els.logLevelFilters) {
+        els.logLevelFilters.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-level]");
+            if (!btn) return;
+            state.logLevel = btn.dataset.level || "";
+            els.logLevelFilters.querySelectorAll(".log-filter").forEach((item) => {
+                item.classList.toggle("active", item === btn);
+            });
+            renderLogEntries();
+        });
+    }
+
+    if (els.logSearch) {
+        els.logSearch.addEventListener("input", () => {
+            state.logQuery = els.logSearch.value || "";
+            renderLogEntries();
+        });
+    }
+
+    if (els.logAutoRefresh) {
+        els.logAutoRefresh.addEventListener("change", syncLogAutoRefresh);
+    }
+
+    if (els.journalContainer) {
+        els.journalContainer.addEventListener("click", (e) => {
+            const toggle = e.target.closest("[data-toggle-events]");
+            if (!toggle) return;
+            const block = toggle.closest(".comm-block");
+            const events = block ? block.querySelector(".comm-events") : null;
+            if (!events) return;
+            const nowHidden = events.classList.toggle("hidden");
+            toggle.textContent = nowHidden ? "Подробнее" : "Свернуть";
+        });
+    }
+
+    if (els.runStatus) {
+        els.runStatus.addEventListener("click", () => {
+            state.logsTab = "journal";
+            openLogs();
+        });
     }
 
     if (els.logsModal) {
@@ -1047,4 +1323,5 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     loadConfig();
+    loadRunStatus();
 });

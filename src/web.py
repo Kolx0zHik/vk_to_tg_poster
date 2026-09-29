@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from .backfill import BackfillRequests, requests_path_for
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict, validate_timezone
 from .envfile import load_env_file
+from .journal import RunJournal, journal_path_for, redact_tree
 from .logger import redact_secrets
 from .version import get_version
 from .vk_ids import normalize_display_id
@@ -312,6 +314,53 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
     return parts[-lines:] if len(parts) > lines else parts
 
 
+_LOG_LINE_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+\[(?P<level>[A-Z]+)\]\s?(?P<message>.*)$"
+)
+_LEVEL_ORDER = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def parse_log_lines(raw_lines: list[str]) -> list[dict]:
+    """Turn compact log lines into ``{ts, level, message}`` records.
+
+    Continuation lines (a traceback body, a multi-line message) are appended to
+    the previous record so the panel can render each event as one block.
+    """
+    entries: list[dict] = []
+    for raw in raw_lines:
+        line = raw.rstrip("\n")
+        match = _LOG_LINE_RE.match(line)
+        if match:
+            entries.append(
+                {
+                    "ts": match.group("ts"),
+                    "level": match.group("level"),
+                    "message": match.group("message"),
+                }
+            )
+        elif entries:
+            entries[-1]["message"] += "\n" + line
+        elif line:
+            entries.append({"ts": "", "level": "", "message": line})
+    return entries
+
+
+def filter_log_entries(entries: list[dict], level: str, query: str) -> list[dict]:
+    """Filter parsed log records by minimum level and a case-insensitive substring."""
+    wanted = (level or "").strip().upper()
+    if wanted in _LEVEL_ORDER:
+        threshold = _LEVEL_ORDER.index(wanted)
+        entries = [
+            entry
+            for entry in entries
+            if entry.get("level") in _LEVEL_ORDER and _LEVEL_ORDER.index(entry["level"]) >= threshold
+        ]
+    needle = (query or "").strip().lower()
+    if needle:
+        entries = [entry for entry in entries if needle in str(entry.get("message", "")).lower()]
+    return entries
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     index_path = BASE_DIR / "static" / "index.html"
@@ -583,7 +632,7 @@ async def set_backfill(payload: BackfillModel) -> dict:
 
 
 @app.get("/api/logs")
-async def get_logs(lines: int = 200) -> dict:
+async def get_logs(lines: int = 200, level: str = "", q: str = "") -> dict:
     try:
         cfg = load_config(
             CONFIG_PATH,
@@ -597,7 +646,38 @@ async def get_logs(lines: int = 200) -> dict:
         log_path = Path("data/logs/poster.log")
 
     if not log_path.exists():
-        return {"lines": [], "path": str(log_path)}
+        return {"lines": [], "entries": [], "path": str(log_path)}
 
     tail = _tail_lines(log_path, lines)
-    return {"lines": [redact_secrets(line) for line in tail], "path": str(log_path)}
+    entries = filter_log_entries(parse_log_lines(tail), level, q)
+    return {
+        "lines": [redact_secrets(line) for line in tail],
+        "entries": [
+            {
+                "ts": entry.get("ts", ""),
+                "level": entry.get("level", ""),
+                "message": redact_secrets(entry.get("message", "")),
+            }
+            for entry in entries
+        ],
+        "path": str(log_path),
+    }
+
+
+@app.get("/api/journal")
+async def get_journal(runs: int = 10) -> dict:
+    try:
+        cfg = load_config(
+            CONFIG_PATH,
+            require_tokens=False,
+            require_channel=False,
+            require_communities=False,
+            allow_missing=True,
+        )
+        journal_path = journal_path_for(cfg.general.cache_file)
+    except Exception:
+        journal_path = journal_path_for("data/cache.json")
+
+    limit = max(1, min(int(runs), 50))
+    items = RunJournal(journal_path).recent(limit=limit)
+    return {"runs": redact_tree(items), "path": str(journal_path)}

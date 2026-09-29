@@ -7,6 +7,8 @@ data/cache.json
 data/avatars.json
 data/backfill.json
 data/backfill.json.tmp
+data/runs.json
+data/runs.json.tmp
 logs/
 *.log
 *.pyc
