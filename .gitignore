@@ -1,5 +1,6 @@
 .env
 config/config.yaml
+data/config.yaml
 __pycache__/
 .pytest_cache/
 data/cache.json

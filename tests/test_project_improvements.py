@@ -252,7 +252,7 @@ class LLMModelsTests(unittest.TestCase):
                 {"data": [{"id": "model-b"}, {"id": "model-a"}, {"id": "model-b"}]},
             )
 
-        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://configured.example/v1"))
+        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://provider.example/v1/"))
         with patch.object(web, "load_env_file"), patch.object(web, "load_config", return_value=cfg), patch.dict(
             os.environ, {"LLM_API_KEY": "sk-test"}
         ), patch.object(web.requests, "get", side_effect=fake_get):
@@ -262,6 +262,18 @@ class LLMModelsTests(unittest.TestCase):
         self.assertEqual(calls["url"], "https://provider.example/v1/models")
         self.assertEqual(calls["headers"]["Authorization"], "Bearer sk-test")
         self.assertEqual(calls["timeout"], web.LLM_MODELS_TIMEOUT)
+
+    def test_llm_models_rejects_base_url_outside_saved_config(self) -> None:
+        cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://configured.example/v1"))
+
+        with patch.object(web, "load_env_file"), patch.object(web, "load_config", return_value=cfg), patch.dict(
+            os.environ, {"LLM_API_KEY": "sk-test"}
+        ), patch.object(web.requests, "get") as fake_get:
+            with self.assertRaises(web.HTTPException) as ctx:
+                asyncio.run(web.llm_models(base_url="https://evil.example/v1"))
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        fake_get.assert_not_called()
 
     def test_llm_models_uses_configured_base_url_when_query_is_empty(self) -> None:
         cfg = types.SimpleNamespace(llm=types.SimpleNamespace(base_url="https://configured.example/v1/"))

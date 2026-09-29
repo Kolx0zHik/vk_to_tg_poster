@@ -484,9 +484,22 @@ class BackfillModel(BaseModel):
     value: int = 0
 
 
+def _normalize_llm_base_url(value: str) -> str:
+    value = (value or "").strip().rstrip("/")
+    if value.endswith("/chat/completions"):
+        value = value[: -len("/chat/completions")].rstrip("/")
+    return value
+
+
 @app.get("/api/llm/models")
 async def llm_models(base_url: str = "") -> dict:
-    """List models from an OpenAI-compatible provider using LLM_API_KEY."""
+    """List models from the configured OpenAI-compatible provider using LLM_API_KEY.
+
+    The provider host is never taken from the query string: the key is only ever
+    sent to the host saved in ``llm.base_url``. A client-supplied ``base_url``
+    that differs from the saved one is rejected, so the panel cannot be used to
+    leak the key to an arbitrary host (see ADR-024).
+    """
     load_env_file(CONFIG_PATH)
     key = os.getenv("LLM_API_KEY", "").strip()
     if not key:
@@ -500,14 +513,19 @@ async def llm_models(base_url: str = "") -> dict:
             require_communities=False,
             allow_missing=True,
         )
-        configured_base_url = (cfg.llm.base_url or "").strip()
+        configured_base_url = _normalize_llm_base_url(cfg.llm.base_url)
     except Exception:
         configured_base_url = ""
-    target = (base_url.strip() or configured_base_url).strip()
-    if not target:
-        raise HTTPException(status_code=400, detail={"message": "Укажите Base URL провайдера"})
-    if target.endswith("/chat/completions"):
-        target = target[: -len("/chat/completions")]
+    if not configured_base_url:
+        raise HTTPException(status_code=400, detail={"message": "Укажите Base URL провайдера и сохраните настройки"})
+
+    requested = _normalize_llm_base_url(base_url) if base_url.strip() else configured_base_url
+    if requested != configured_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Сначала сохраните Base URL, затем загрузите список моделей"},
+        )
+    target = configured_base_url
     if not target.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail={"message": "Base URL должен начинаться с http:// или https://"})
 

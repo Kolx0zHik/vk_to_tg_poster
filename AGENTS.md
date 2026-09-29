@@ -14,6 +14,10 @@ This repository is a small VK-to-Telegram reposting service.
 - `src.backfill` holds backfill/resume requests written by the web UI and consumed by the scheduler.
 - `src.envfile` loads secrets from `.env` next to the config path.
 - `src.dedup` performs the optional LLM-based semantic duplicate check (OpenAI-compatible API).
+- `src.vk_ids` normalizes VK links and ids without network access.
+- `src.models` holds the domain models (`Post`, `Attachment`).
+- `src.logger` configures logging, timezone and secret redaction.
+- `src.version` reads `VERSION`.
 
 The project intentionally has no database. Runtime state is stored in files under `data/` and `logs/`.
 
@@ -38,10 +42,11 @@ task as the code change, bump `VERSION`, and add an ADR when a decision constrai
 
 ## Runtime Model
 
-The normal container runtime starts two processes from `entrypoint.sh`:
+The normal container runtime starts two processes from `entrypoint.sh` and supervises both (they run with
+`&`; a wait loop tears the other one down when either exits):
 
-1. `python -m src.main` in background
-2. `uvicorn src.web:app` in foreground
+1. `python -m src.main`
+2. `python -m uvicorn src.web:app`
 
 Default port is `8222`.
 
@@ -114,15 +119,17 @@ Core flow:
 4. Filter by baseline, blocked keywords, allowed content types, and dedup cache
 5. Optionally run the LLM semantic duplicate check (posts with text only)
 6. Publish to Telegram
-7. Update dedup cache and baseline
+7. Update dedup cache (and the community `baseline` only when a backfill/pause request was applied)
 
 Important invariants:
 
 - Order matters: newer VK posts are fetched first, but publishing is done oldest-first.
 - Dedup uses original repost source ids when available via `copy_history`.
-- The per-community `baseline` advances even when a post is skipped as duplicate, to avoid replay loops.
+- Replay loops are prevented by per-post status records (`record_post` returns `known` for anything already
+  in `posts`/`archived`), not by moving the baseline; upstream pagination stops on the first page of known
+  posts. The `baseline` is only written by `_apply_backfill` (backfill/pause request) — see ADR-002.
 - Missing tokens/channel should not crash the scheduler; the run is skipped with a warning.
-- Per-community `baseline` in the cache doubles as the backfill boundary: posts above it are published, posts at or below it are marked skipped.
+- Per-community `baseline` in the cache doubles as the backfill boundary: posts above it are published, posts at or below it are recorded as `skipped` (`baseline` result) so they are consumed once.
 - The web UI writes backfill/pause-request state to `data/backfill.json` (next to `cache_file`); the scheduler consumes it into a cache baseline on the next run. A failed VK fetch keeps the request for the following run instead of dropping it.
 - Inactive (`active: false`) communities must be skipped before any VK request.
 - The semantic check is advisory and fail-open: any LLM/network/config error keeps the post publishable; posts
@@ -251,12 +258,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (129 on feature/semantic-dedup)
+python -m unittest discover -s tests          # unit tests (138 on feature/semantic-dedup)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main
 uvicorn src.web:app --host 0.0.0.0 --port 8222
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 For UI changes, run the app against a throwaway config (`CONFIG_PATH=/tmp/...`) and check the page in a
@@ -324,7 +331,8 @@ owner says so). Keep the sequence complete and never rewrite published history.
 Rules:
 
 - Create tags only for versions that reached `main`; test-branch iterations are not tagged
-  (`v1.0.0`, `v1.1.0`, `v1.1.1`, `v1.1.8`, `v1.1.9` follow this; `1.1.2`–`1.1.7` were pre-release iterations).
+  (`v1.0.0`, `v1.1.0`, `v1.1.1`, `v1.1.8`, `v1.1.9`, `v1.1.10`, `v1.1.12`, `v1.1.13` follow this;
+  `1.1.2`–`1.1.7` were pre-release iterations).
 - Tags are annotated (`git tag -a vX.Y.Z -m "..."`) and pushed with `git push origin vX.Y.Z` — pushing a tag
   triggers the `:vX.Y.Z` image build.
 - Update `CHANGELOG.md` in the same commit as the bump, and `STATE.md` right after.

@@ -7,7 +7,7 @@
 Сервис переносит новые посты из сообществ ВКонтакте в Telegram-канал: работает по cron,
 настраивается через веб-панель, состояние хранит в файлах (без базы данных).
 
-**Версия:** 1.1.14 · **Точка входа для агентов:** [AGENTS.md](./AGENTS.md)
+**Версия:** 1.1.15 · **Точка входа для агентов:** [AGENTS.md](./AGENTS.md)
 
 | Документ | О чём |
 |---|---|
@@ -61,7 +61,7 @@ pip install -r requirements.txt
 cp config/config.example.yaml config/config.yaml
 cp .env.example config/.env     # секреты рядом с конфигом (см. CONFIG_PATH)
 CONFIG_PATH=config/config.yaml RUN_MODE=once python -m src.main   # один цикл публикации
-uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-панель
+CONFIG_PATH=config/config.yaml uvicorn src.web:app --host 0.0.0.0 --port 8222   # веб-панель
 ```
 
 `config/config.example.yaml` — пример конфига для ручного запуска из исходников.
@@ -77,7 +77,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 | `PORT` | `entrypoint.sh` | порт веб-панели, по умолчанию `8222` |
 | `VK_API_TOKEN` | `src/envfile.py`, `src/main.py`, `src/web.py` | VK API token (секрет) |
 | `TELEGRAM_BOT_TOKEN` | `src/envfile.py`, `src/main.py` | токен Telegram-бота (секрет) |
-| `LLM_API_KEY` | `src/envfile.py`, `src/pipeline.py` | ключ OpenAI-совместимого API для семантической проверки дублей |
+| `LLM_API_KEY` | `src/envfile.py`, `src/pipeline.py`, `src/web.py` | ключ OpenAI-совместимого API для семантической проверки дублей |
 
 Часовой пояс логов и расписания задаётся настройкой `general.timezone` (панель: «Основные настройки» → «Часовой пояс», по умолчанию `Europe/Moscow`); подробный лог ИИ-проверки — тумблером `general.semantic_dedup.debug_log` (панель: «ИИ-проверка»). Старые переменные `TZ` и `LLM_DEBUG_LOG` из `.env` больше не читаются и молча игнорируются.
 
@@ -99,7 +99,7 @@ uvicorn src.web:app --host 0.0.0.0 --port 8222                     # веб-па
 ## Проверка изменений
 
 ```bash
-python -m unittest discover -s tests    # 129 тестов
+python -m unittest discover -s tests    # 138 тестов
 node --check static/script.js           # синтаксис фронтенда
 ```
 
