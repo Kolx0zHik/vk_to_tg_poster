@@ -802,13 +802,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const EVENT_META = {
-        published: { icon: "✓", label: "Опубликован", cls: "pub" },
-        duplicate: { icon: "✗", label: "Дубль, пропущен", cls: "dup" },
-        blocked: { icon: "✗", label: "Заблокировано словом", cls: "block" },
-        skipped_type: { icon: "✗", label: "Пропущен по типу контента", cls: "skip" },
-        failed: { icon: "✗", label: "Ошибка публикации", cls: "fail" },
+        published: { icon: "✅", label: "Опубликован", cls: "pub" },
+        duplicate: { icon: "❌", label: "Дубль, пропущен", cls: "dup" },
+        blocked: { icon: "❌", label: "Заблокировано словом", cls: "block" },
+        skipped_type: { icon: "❌", label: "Пропущен по типу контента", cls: "skip" },
+        failed: { icon: "❌", label: "Ошибка публикации", cls: "fail" },
         backfill: { icon: "📚", label: "Дозаливка", cls: "back" },
-        backfill_failed: { icon: "✗", label: "Дозаливка не удалась", cls: "fail" },
+        backfill_failed: { icon: "❌", label: "Дозаливка не удалась", cls: "fail" },
     };
 
     const LEVEL_META = {
@@ -864,9 +864,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const chips = [
             journalChip("fetch", "📥", community.fetched, "Получено из VK"),
             journalChip("new", "✨", community.new, "Новых постов"),
-            journalChip("pub", "✓", community.published, "Опубликовано"),
-            journalChip("skip", "✗", skipped, "Пропущено"),
-            journalChip("err", "✗", community.failed, "Ошибок публикации"),
+            journalChip("pub", "✅", community.published, "Опубликовано"),
+            journalChip("skip", "❌", skipped, "Пропущено"),
+            journalChip("err", "❌", community.failed, "Ошибок публикации"),
             journalChip("queue", "🕓", community.pending, "Осталось в очереди"),
         ].join("");
         const stateChip = community.status === "paused"

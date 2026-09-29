@@ -1246,7 +1246,7 @@ input:checked + .slider::before {
 
 .jc.fetch { background: #f5f3ff; color: #6d28d9; }
 .jc.new { background: #eff6ff; color: #1d4ed8; }
-.jc.pub { background: #ecfdf5; color: #16a34a; font-weight: 700; }
+.jc.pub { background: #ecfdf5; color: #16a34a; }
 .jc.skip { background: #fef2f2; color: #dc2626; }
 .jc.err { background: #fef2f2; color: #dc2626; }
 .jc.queue { background: #fff7ed; color: #c2410c; }
@@ -1297,12 +1297,7 @@ input:checked + .slider::before {
 .journal-event.je-fail { background: #fef2f2; }
 .journal-event.je-dup { background: #fffbeb; }
 
-.je-icon { flex-shrink: 0; font-weight: 700; }
-.je-pub .je-icon { color: #16a34a; }
-.je-dup .je-icon,
-.je-block .je-icon,
-.je-skip .je-icon,
-.je-fail .je-icon { color: #dc2626; }
+.je-icon { flex-shrink: 0; }
 .je-label { font-weight: 600; }
 .je-link { color: #2563eb; text-decoration: none; }
 .je-link:hover { text-decoration: underline; }
