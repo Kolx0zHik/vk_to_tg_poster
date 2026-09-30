@@ -18,6 +18,8 @@ document.addEventListener("DOMContentLoaded", () => {
         logQuery: "",
         logEntries: [],
         logAutoTimer: null,
+        journalRuns: [],
+        journalFilter: "all",
     };
 
     const els = {
@@ -66,6 +68,7 @@ document.addEventListener("DOMContentLoaded", () => {
         refreshLogsBtn: document.getElementById("refreshLogsBtn"),
         journalContainer: document.getElementById("journalContainer"),
         journalPanel: document.getElementById("journalPanel"),
+        journalFilters: document.getElementById("journalFilters"),
         logPanel: document.getElementById("logPanel"),
         logsTabs: document.querySelectorAll("[data-logs-tab]"),
         logLevelFilters: document.getElementById("logLevelFilters"),
@@ -881,11 +884,32 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>`;
     }
 
-    function renderJournal(runs) {
+    function communityHasActivity(community) {
+        if (!community) return false;
+        if (community.error) return true;
+        if ((community.events || []).length) return true;
+        const actionable = ["published", "failed", "blocked", "skipped_by_type", "dedup_skipped", "backfill", "pending"];
+        return actionable.some((key) => Number(community[key]) > 0);
+    }
+
+    function runHasActivity(run) {
+        if (!run) return false;
+        if (run.error || run.ok === false) return true;
+        return (run.communities || []).some(communityHasActivity);
+    }
+
+    function renderJournal() {
         if (!els.journalContainer) return;
-        if (!runs || !runs.length) {
+        const all = state.journalRuns || [];
+        const runs = state.journalFilter === "activity" ? all.filter(runHasActivity) : all;
+        if (!all.length) {
             els.journalContainer.innerHTML =
                 '<div class="journal-empty">Запусков ещё не было. Журнал появится после первого запуска публикации.</div>';
+            return;
+        }
+        if (!runs.length) {
+            els.journalContainer.innerHTML =
+                '<div class="journal-empty">Событий нет: за это время ничего не публиковалось, дублей и ошибок не было.</div>';
             return;
         }
         els.journalContainer.innerHTML = runs.map((run) => {
@@ -894,9 +918,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const when = formatJournalTime(run.finished || run.started);
             const rel = formatRelativeTime(run.finished || run.started);
             const duration = run.duration != null ? `${run.duration} с` : "";
-            const communities = (run.communities || []).map(renderJournalCommunity).join("");
+            let allCommunities = run.communities || [];
+            if (state.journalFilter === "activity") {
+                allCommunities = allCommunities.filter(communityHasActivity);
+            }
+            const communities = allCommunities.map(renderJournalCommunity).join("");
             const runError = run.error ? `<div class="run-error">${escapeHtml(run.error)}</div>` : "";
-            const empty = !run.communities || !run.communities.length;
+            const empty = !allCommunities.length;
             return `<div class="run-card ${ok ? "ok" : "err"}">
                 <div class="run-head">
                     <span class="run-badge">${escapeHtml(statusLabel)}</span>
@@ -913,8 +941,10 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const res = await fetch("/api/journal?runs=10");
             const data = await res.json();
-            renderJournal(data.runs || []);
+            state.journalRuns = data.runs || [];
+            renderJournal();
         } catch {
+            state.journalRuns = [];
             if (els.journalContainer) {
                 els.journalContainer.innerHTML = '<div class="journal-empty">Не удалось загрузить журнал.</div>';
             }
@@ -974,9 +1004,17 @@ document.addEventListener("DOMContentLoaded", () => {
         if (state.logsTab === "log") {
             loadLogs();
         } else {
+            syncJournalFilter();
             loadJournal();
         }
         syncLogAutoRefresh();
+    }
+
+    function syncJournalFilter() {
+        if (!els.journalFilters) return;
+        els.journalFilters.querySelectorAll(".log-filter").forEach((btn) => {
+            btn.classList.toggle("active", btn.dataset.journalFilter === state.journalFilter);
+        });
     }
 
     function stopLogAutoRefresh() {
@@ -1300,6 +1338,18 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!events) return;
             const nowHidden = events.classList.toggle("hidden");
             toggle.textContent = nowHidden ? "Подробнее" : "Свернуть";
+        });
+    }
+
+    if (els.journalFilters) {
+        els.journalFilters.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-journal-filter]");
+            if (!btn) return;
+            const next = btn.dataset.journalFilter === "activity" ? "activity" : "all";
+            if (next === state.journalFilter) return;
+            state.journalFilter = next;
+            syncJournalFilter();
+            renderJournal();
         });
     }
 
