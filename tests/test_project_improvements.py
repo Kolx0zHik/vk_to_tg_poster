@@ -1294,7 +1294,7 @@ class SaveConfigNormalizationTests(unittest.TestCase):
             general=web.GeneralModel(
                 cron="*/10 * * * *",
                 timezone="Asia/Almaty",
-                semantic_dedup=web.SemanticDedupModel(enabled=True, window_days=7, debug_log=True),
+                semantic_dedup=web.SemanticDedupModel(enabled=True, window_days=7),
             ),
             vk=web.TokenModel(),
             telegram=web.TelegramModel(channel_id="@channel"),
@@ -1311,12 +1311,11 @@ class SaveConfigNormalizationTests(unittest.TestCase):
             self.assertEqual(data["llm"]["model"], "model-x")
             self.assertTrue(data["general"]["semantic_dedup"]["enabled"])
             self.assertEqual(data["general"]["semantic_dedup"]["window_days"], 7)
-            self.assertTrue(data["general"]["semantic_dedup"]["debug_log"])
+            self.assertNotIn("debug_log", data["general"]["semantic_dedup"])
             self.assertEqual(data["general"]["timezone"], "Asia/Almaty")
             saved = web.load_config(config_path, require_tokens=False, require_channel=False)
             self.assertEqual(saved.llm.prompt, "мой промпт")
             self.assertTrue(saved.general.semantic_dedup.enabled)
-            self.assertTrue(saved.general.semantic_dedup.debug_log)
             self.assertEqual(saved.general.timezone, "Asia/Almaty")
 
     def test_save_rejects_unknown_timezone(self) -> None:

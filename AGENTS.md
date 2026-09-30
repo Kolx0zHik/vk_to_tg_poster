@@ -59,8 +59,8 @@ Important environment variables:
 - `VK_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY` — secrets, read only from the environment/`.env`
 
 `.env` holds secrets only. Non-secret settings live in `config.yaml` and are edited from the web UI: the log/schedule
-time zone is `general.timezone` (was env `TZ`) and the semantic-dedup test switch is `general.semantic_dedup.debug_log`
-(was env `LLM_DEBUG_LOG`); see ADR-022. `src/envfile.py` silently ignores those legacy keys. `RUN_MODE` and `PORT`
+time zone is `general.timezone` (was env `TZ`); the old semantic-dedup debug switch `LLM_DEBUG_LOG` no longer
+exists (removed in ADR-026). `src/envfile.py` silently ignores those legacy keys. `RUN_MODE` and `PORT`
 stay container launch parameters, and `CONFIG_PATH` is bootstrap — those are not config-file settings.
 
 Secrets live in a `.env` file next to `CONFIG_PATH` (in Docker the mounted `data/` directory), loaded by
@@ -100,7 +100,7 @@ Configuration is YAML-backed and parsed into dataclasses in `src.config`.
 - Keep `log_retention_days` and other logging-related general settings aligned between `src.config` and `src.web`.
 - `ContentTypes` defaults to `audio: true` in code while the UI writes `audio: false`; do not "fix" this
   silently — it is recorded in `STATE.md`.
-- `general.semantic_dedup` (`enabled`, `window_days`, `debug_log`), `general.timezone` and `llm` (`base_url`,
+- `general.semantic_dedup` (`enabled`, `window_days`), `general.timezone` and `llm` (`base_url`,
   `model`, `prompt`) are non-secret and edited from the web UI; keep `src.config`, `src.web` models and
   `static/script.js` in sync. The system
   prompt is mandatory at parse time: dataclass defaults leave `llm.prompt` empty and an empty
@@ -195,7 +195,7 @@ UI conventions in `static/`:
 - Plain HTML/CSS/JS, no build step, no npm, no external framework.
 - All user-facing strings are Russian; keep the current tone.
 - Tokens are never edited in the UI: they live in `.env`. The header has an "ИИ-проверка" modal
-  (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days/debug_log`) and the
+  (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days`) and the
   Telegram channel field sits in the main settings card (with the `general.timezone` field).
 - The header also shows a last-run status chip (`GET /api/journal?runs=1`) that opens the logs modal on the
   journal tab. The "Логи" modal has two tabs: "Журнал запусков" (run cards from `/api/journal`: counters as
@@ -269,7 +269,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (148)
+python -m unittest discover -s tests          # unit tests (144)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main

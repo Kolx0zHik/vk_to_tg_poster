@@ -50,7 +50,6 @@ class LogRotationSettings:
 class SemanticDedupSettings:
     enabled: bool = False
     window_days: int = 4
-    debug_log: bool = False
 
 
 @dataclass
@@ -172,6 +171,12 @@ def _parse_log_rotation(raw: Dict) -> LogRotationSettings:
 
 
 def _parse_semantic_dedup(raw: Dict) -> SemanticDedupSettings:
+    """Parse the semantic dedup settings.
+
+    The temporary ``debug_log`` switch was removed after the live validation
+    (ADR-026): an older config that still carries the key is accepted and the
+    key is dropped on the next save.
+    """
     raw = raw or {}
     if not isinstance(raw, dict):
         raise ConfigError("general.semantic_dedup должно быть словарём")
@@ -182,7 +187,6 @@ def _parse_semantic_dedup(raw: Dict) -> SemanticDedupSettings:
             "semantic_dedup.window_days",
             SemanticDedupSettings.window_days,
         ),
-        debug_log=bool(raw.get("debug_log", False)),
     )
 
 
@@ -322,7 +326,6 @@ def config_to_dict(config: Config) -> Dict:
             "semantic_dedup": {
                 "enabled": config.general.semantic_dedup.enabled,
                 "window_days": config.general.semantic_dedup.window_days,
-                "debug_log": config.general.semantic_dedup.debug_log,
             },
         },
         "vk": {},

@@ -43,7 +43,6 @@ document.addEventListener("DOMContentLoaded", () => {
         aiModelCombobox: document.getElementById("aiModelCombobox"),
         aiModelList: document.getElementById("aiModelList"),
         aiWindow: document.getElementById("aiWindow"),
-        aiDebugLog: document.getElementById("aiDebugLog"),
         aiPrompt: document.getElementById("aiPrompt"),
 
         newGroupInput: document.getElementById("newGroupInput"),
@@ -475,7 +474,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 semantic_dedup: {
                     enabled: els.aiEnabled.checked,
                     window_days: parseInt(els.aiWindow.value, 10) || 4,
-                    debug_log: els.aiDebugLog.checked,
                 },
             },
             vk: {
@@ -560,7 +558,6 @@ document.addEventListener("DOMContentLoaded", () => {
             const dedup = data.general?.semantic_dedup || {};
             els.aiEnabled.checked = Boolean(dedup.enabled);
             els.aiWindow.value = dedup.window_days || 4;
-            els.aiDebugLog.checked = Boolean(dedup.debug_log);
             els.aiBaseUrl.value = data.llm?.base_url || "";
             els.aiModel.value = data.llm?.model || "";
             els.aiPrompt.value = data.llm?.prompt || "";

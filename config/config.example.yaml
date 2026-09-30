@@ -15,7 +15,6 @@ general:
   semantic_dedup:
     enabled: false
     window_days: 4
-    debug_log: false   # временно: писать в лог вердикт «не дубль» по каждому посту
 llm:
   base_url: "https://openrouter.ai/api/v1"
   model: "inclusionai/ling-3.0-flash-sante:free"

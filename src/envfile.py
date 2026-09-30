@@ -7,8 +7,7 @@ quoting/escaping needed) and only sets variables that are not already present
 in ``os.environ`` so an explicit Docker/Compose env always wins.  Legacy
 non-secret keys (``TZ``, ``LLM_DEBUG_LOG``) are ignored for backwards
 compatibility with older ``.env`` files: time zone now comes from
-``general.timezone`` and the debug toggle from
-``general.semantic_dedup.debug_log``.
+``general.timezone`` and the former debug toggle no longer exists (ADR-026).
 """
 
 import os

@@ -42,7 +42,6 @@ class LogRotationModel(BaseModel):
 class SemanticDedupModel(BaseModel):
     enabled: bool = False
     window_days: int = Field(4, ge=1, le=30)
-    debug_log: bool = False
 
 
 class GeneralModel(BaseModel):

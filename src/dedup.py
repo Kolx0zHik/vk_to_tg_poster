@@ -26,7 +26,6 @@ logger = logging.getLogger("poster.dedup")
 LLM_TIMEOUT = 60
 LLM_MAX_RETRIES = 1
 LLM_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
-LLM_DEBUG_MAX_CHARS = 500
 # Candidate block budget in characters. Truncation happens on whole-candidate
 # boundaries: trailing candidates are dropped entirely; the last kept candidate
 # may be cut short with a marker (never inside the numbered prefix).
@@ -174,13 +173,12 @@ class SemanticDedup:
     semantic check entirely).
     """
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT, debug_log: bool = False):
+    def __init__(self, base_url: str, model: str, api_key: str = "", prompt: str = "", timeout: int = LLM_TIMEOUT):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.prompt = prompt.strip()
         self.timeout = timeout
-        self.debug_log = bool(debug_log)
         self.session = requests.Session()
 
     def _is_configured(self) -> bool:
@@ -240,10 +238,4 @@ class SemanticDedup:
 
         if not content:
             raise DedupError("LLM вернул пустой ответ")
-        try:
-            return _parse_result(_extract_json(content), len(candidates))
-        except DedupError:
-            if self.debug_log:
-                flat = " ".join(str(content).split())[:LLM_DEBUG_MAX_CHARS]
-                logger.info("LLM ответ (кандидатов %s): %s", len(candidates), flat)
-            raise
+        return _parse_result(_extract_json(content), len(candidates))
