@@ -392,7 +392,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
             </div>
             <div class="md-detail-foot">
-                <span class="pill">Изменения сохранит кнопка «Сохранить»</span>
                 <button type="button" class="link-danger" data-action="remove">${svgIcon(ICONS.trash)}Удалить сообщество</button>
             </div>
         `;
