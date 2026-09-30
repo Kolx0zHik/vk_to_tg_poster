@@ -20,7 +20,9 @@ from typing import Any, Dict, List
 from .logger import redact_secrets
 
 JOURNAL_VERSION = 1
-MAX_RUNS = 50
+# 500 runs cover ~2 days at the default 10-minute cron (144 runs/day) and are
+# enough for the "за сутки / за 2 дня" period filters in the panel.
+MAX_RUNS = 500
 MAX_EVENTS_PER_COMMUNITY = 30
 
 

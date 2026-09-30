@@ -20,7 +20,13 @@ document.addEventListener("DOMContentLoaded", () => {
         logAutoTimer: null,
         journalRuns: [],
         journalFilter: "all",
+        journalPeriod: "1d",
     };
+
+    const JOURNAL_PERIODS = { "1h": 3600, "6h": 21600, "12h": 43200, "1d": 86400, "2d": 172800 };
+    // Enough for the "2 дня" period at the default 10-minute cron; the server
+    // clamps to MAX_RUNS (500) anyway.
+    const JOURNAL_FETCH_RUNS = 500;
 
     const els = {
         interval: document.getElementById("interval"),
@@ -69,6 +75,7 @@ document.addEventListener("DOMContentLoaded", () => {
         journalContainer: document.getElementById("journalContainer"),
         journalPanel: document.getElementById("journalPanel"),
         journalFilters: document.getElementById("journalFilters"),
+        journalPeriodFilters: document.getElementById("journalPeriodFilters"),
         logPanel: document.getElementById("logPanel"),
         logsTabs: document.querySelectorAll("[data-logs-tab]"),
         logLevelFilters: document.getElementById("logLevelFilters"),
@@ -898,18 +905,41 @@ document.addEventListener("DOMContentLoaded", () => {
         return (run.communities || []).some(communityHasActivity);
     }
 
+    function runInPeriod(run) {
+        const seconds = JOURNAL_PERIODS[state.journalPeriod];
+        if (!seconds) return true;
+        const ts = Number((run && (run.finished || run.started)) || 0);
+        if (!ts) return true;
+        return Date.now() / 1000 - ts <= seconds;
+    }
+
+    function periodLabel() {
+        if (state.journalPeriod === "all") return "за всё время";
+        if (state.journalPeriod === "1d") return "за сутки";
+        if (state.journalPeriod === "2d") return "за 2 дня";
+        if (state.journalPeriod === "1h") return "за 1 час";
+        if (state.journalPeriod === "6h") return "за 6 часов";
+        if (state.journalPeriod === "12h") return "за 12 часов";
+        return "";
+    }
+
     function renderJournal() {
         if (!els.journalContainer) return;
-        const all = state.journalRuns || [];
-        const runs = state.journalFilter === "activity" ? all.filter(runHasActivity) : all;
-        if (!all.length) {
+        const fetched = (state.journalRuns || []).filter(runInPeriod);
+        const runs = state.journalFilter === "activity" ? fetched.filter(runHasActivity) : fetched;
+        if (!state.journalRuns || !state.journalRuns.length) {
             els.journalContainer.innerHTML =
                 '<div class="journal-empty">Запусков ещё не было. Журнал появится после первого запуска публикации.</div>';
             return;
         }
+        if (!fetched.length) {
+            els.journalContainer.innerHTML =
+                `<div class="journal-empty">Запусков ${escapeHtml(periodLabel())} нет — всего в журнале ${state.journalRuns.length}. Выберите период побольше или «Всё время».</div>`;
+            return;
+        }
         if (!runs.length) {
             els.journalContainer.innerHTML =
-                '<div class="journal-empty">Событий нет: за это время ничего не публиковалось, дублей и ошибок не было.</div>';
+                `<div class="journal-empty">Событий нет ${escapeHtml(periodLabel())}: ничего не публиковалось, дублей и ошибок не было.</div>`;
             return;
         }
         els.journalContainer.innerHTML = runs.map((run) => {
@@ -939,7 +969,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     async function loadJournal() {
         try {
-            const res = await fetch("/api/journal?runs=10");
+            const res = await fetch(`/api/journal?runs=${JOURNAL_FETCH_RUNS}`);
             const data = await res.json();
             state.journalRuns = data.runs || [];
             renderJournal();
@@ -1011,10 +1041,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function syncJournalFilter() {
-        if (!els.journalFilters) return;
-        els.journalFilters.querySelectorAll(".log-filter").forEach((btn) => {
-            btn.classList.toggle("active", btn.dataset.journalFilter === state.journalFilter);
-        });
+        if (els.journalFilters) {
+            els.journalFilters.querySelectorAll(".log-filter").forEach((btn) => {
+                btn.classList.toggle("active", btn.dataset.journalFilter === state.journalFilter);
+            });
+        }
+        if (els.journalPeriodFilters) {
+            els.journalPeriodFilters.querySelectorAll(".log-filter").forEach((btn) => {
+                btn.classList.toggle("active", btn.dataset.journalPeriod === state.journalPeriod);
+            });
+        }
     }
 
     function stopLogAutoRefresh() {
@@ -1348,6 +1384,18 @@ document.addEventListener("DOMContentLoaded", () => {
             const next = btn.dataset.journalFilter === "activity" ? "activity" : "all";
             if (next === state.journalFilter) return;
             state.journalFilter = next;
+            syncJournalFilter();
+            renderJournal();
+        });
+    }
+
+    if (els.journalPeriodFilters) {
+        els.journalPeriodFilters.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-journal-period]");
+            if (!btn) return;
+            const next = btn.dataset.journalPeriod || "all";
+            if (next === state.journalPeriod) return;
+            state.journalPeriod = next;
             syncJournalFilter();
             renderJournal();
         });

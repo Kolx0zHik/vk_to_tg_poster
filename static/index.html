@@ -323,8 +323,16 @@
             <div class="logs-panel" id="journalPanel">
                 <div class="logs-toolbar">
                     <div class="logs-filters" id="journalFilters">
-                        <button type="button" class="log-filter active" data-journal-filter="all">Все</button>
-                        <button type="button" class="log-filter" data-journal-filter="activity">Только с событиями</button>
+                        <button type="button" class="log-filter active" data-journal-filter="all" title="Показывать все прогоны">Все</button>
+                        <button type="button" class="log-filter" data-journal-filter="activity" title="Скрывать прогоны и сообщества, где ничего не произошло">Только с событиями</button>
+                    </div>
+                    <div class="logs-filters" id="journalPeriodFilters" title="Период запусков в журнале">
+                        <button type="button" class="log-filter" data-journal-period="1h">1 час</button>
+                        <button type="button" class="log-filter" data-journal-period="6h">6 часов</button>
+                        <button type="button" class="log-filter" data-journal-period="12h">12 часов</button>
+                        <button type="button" class="log-filter active" data-journal-period="1d">Сутки</button>
+                        <button type="button" class="log-filter" data-journal-period="2d">2 дня</button>
+                        <button type="button" class="log-filter" data-journal-period="all">Всё время</button>
                     </div>
                 </div>
                 <div class="journal-list" id="journalContainer"></div>

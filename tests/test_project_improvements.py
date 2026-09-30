@@ -1571,6 +1571,11 @@ class RunJournalTests(unittest.TestCase):
             self.assertEqual(len(runs), MAX_RUNS)
             self.assertEqual(runs[0]["started"], MAX_RUNS + 4)
 
+    def test_cap_covers_two_days_at_default_cron(self) -> None:
+        # The panel period filter goes up to 2 days; the default cron is every
+        # 10 minutes => 144 runs/day. MAX_RUNS must not drop that window.
+        self.assertGreaterEqual(MAX_RUNS, 2 * 24 * 6)
+
     def test_redact_tree_walks_nested_structures(self) -> None:
         token = _fake_vk_token("NESTEDSECRET")
         result = redact_tree({"communities": [{"error": f"x?access_token={token}"}]})
@@ -1626,6 +1631,44 @@ class LogParsingTests(unittest.TestCase):
 
             self.assertEqual(len(result["runs"]), 1)
             self.assertTrue(result["runs"][0]["ok"])
+
+    def test_api_journal_returns_more_than_old_cap(self) -> None:
+        # 1.2.2: the cap grew to 500, so a "2 days" window fits in one request;
+        # previously runs above 50 were silently dropped by the API clamp.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            journal = RunJournal(journal_path_for(cache_path))
+            for index in range(60):
+                journal.record({"started": index, "communities": []})
+            cfg = Config(
+                general=GeneralSettings(cache_file=str(cache_path)),
+                vk=VKSettings(),
+                telegram=TelegramSettings(),
+                communities=[],
+            )
+
+            with patch.object(web, "load_config", return_value=cfg):
+                result = asyncio.run(web.get_journal(runs=500))
+
+            self.assertEqual(len(result["runs"]), 60)
+
+    def test_api_journal_clamps_limit_to_max_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.json"
+            journal = RunJournal(journal_path_for(cache_path))
+            for index in range(MAX_RUNS + 20):
+                journal.record({"started": index, "communities": []})
+            cfg = Config(
+                general=GeneralSettings(cache_file=str(cache_path)),
+                vk=VKSettings(),
+                telegram=TelegramSettings(),
+                communities=[],
+            )
+
+            with patch.object(web, "load_config", return_value=cfg):
+                result = asyncio.run(web.get_journal(runs=100000))
+
+            self.assertEqual(len(result["runs"]), MAX_RUNS)
 
 
 class PipelineSummaryTests(unittest.TestCase):

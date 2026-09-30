@@ -1051,6 +1051,7 @@ input:checked + .slider::before {
 
 .logs-filters {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
 }
 

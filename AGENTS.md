@@ -154,7 +154,7 @@ An empty `llm.prompt` disables the check entirely (see above).
 | `data/.env` | humans | secrets only, next to `CONFIG_PATH`; loaded by `src/envfile.py` |
 | `data/cache.json` | **scheduler only** | schema v2; published posts keep a short `text` for the semantic pool |
 | `data/backfill.json` | web UI (written), scheduler (consumed) | path derived via `requests_path_for(cache_file)` |
-| `data/runs.json` | **scheduler only** | run journal for the panel (path via `journal_path_for(cache_file)`); capped (`MAX_RUNS=50`), redacted at write time; web only reads it via `GET /api/journal` |
+| `data/runs.json` | **scheduler only** | run journal for the panel (path via `journal_path_for(cache_file)`); capped (`MAX_RUNS=500` — ~3.5 days at the default 10-min cron, enough for the panel's period filters), redacted at write time; web only reads it via `GET /api/journal` |
 | `data/avatars.json` | web UI | 24h TTL cache of name/photo |
 
 Never write `cache.json` from the web process: the scheduler rewrites it continuously and an outside write
@@ -198,9 +198,10 @@ UI conventions in `static/`:
   (`llm.base_url`, `llm.model`, `llm.prompt`, `general.semantic_dedup.enabled/window_days`) and the
   Telegram channel field sits in the main settings card (with the `general.timezone` field).
 - The header also shows a last-run status chip (`GET /api/journal?runs=1`) that opens the logs modal on the
-  journal tab. The "Логи" modal has two tabs: "Журнал запусков" (run cards from `/api/journal`: counters as
-  chips, expandable per-post events) and "Технический лог" (parsed `/api/logs` entries with level badges,
-  filter buttons, search, 5s auto-refresh toggle). Keep the journal tab default.
+  journal tab. The "Логи" modal has two tabs: "Журнал запусков" (run cards from `/api/journal?runs=500`: counters as
+  chips, expandable per-post events, plus a "Все / Только с событиями" toggle and a period filter
+  "1 час / 6 часов / 12 часов / сутки / 2 дня / всё время", default "сутки") and "Технический лог" (parsed
+  `/api/logs` entries with level badges, filter buttons, search, 5s auto-refresh toggle). Keep the journal tab default.
 - The groups panel is master-detail: left list (search + names), right settings (status segment, content
   type icon toggles). No checkboxes, no raw community ids anywhere, community name links to VK.
 - Adding a community happens in a modal (same style as the old tokens modal) with preset amount buttons and
@@ -269,7 +270,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unittest discover -s tests          # unit tests (144)
+python -m unittest discover -s tests          # unit tests (147)
 node --check static/script.js                 # frontend syntax check
 
 CONFIG_PATH=data/config.yaml RUN_MODE=once python -m src.main

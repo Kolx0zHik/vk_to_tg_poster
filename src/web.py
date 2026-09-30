@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from .backfill import BackfillRequests, requests_path_for
 from .config import ConfigError, config_to_dict, load_config, parse_config_dict, save_config_dict, validate_timezone
 from .envfile import load_env_file
-from .journal import RunJournal, journal_path_for, redact_tree
+from .journal import MAX_RUNS, RunJournal, journal_path_for, redact_tree
 from .logger import redact_secrets
 from .version import get_version
 from .vk_ids import normalize_display_id
@@ -677,6 +677,6 @@ async def get_journal(runs: int = 10) -> dict:
     except Exception:
         journal_path = journal_path_for("data/cache.json")
 
-    limit = max(1, min(int(runs), 50))
+    limit = max(1, min(int(runs), MAX_RUNS))
     items = RunJournal(journal_path).recent(limit=limit)
     return {"runs": redact_tree(items), "path": str(journal_path)}
